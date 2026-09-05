@@ -1,0 +1,1 @@
+package pe.com.dentalamericana.finance;import org.springframework.data.jpa.repository.JpaRepository;import java.util.*;public interface CashSessionRepository extends JpaRepository<CashSession,Long>{Optional<CashSession>findFirstByEstadoOrderByOpenedAtDesc(CashSessionStatus status);List<CashSession>findAllByOrderByOpenedAtDesc();}

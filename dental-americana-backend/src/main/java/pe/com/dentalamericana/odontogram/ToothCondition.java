@@ -1,0 +1,2 @@
+package pe.com.dentalamericana.odontogram;
+public enum ToothCondition { CARIES, RESTAURACION, CORONA, AUSENTE, EXTRACCION_INDICADA, ENDODONCIA, FRACTURA, SELLANTE, PROTESIS, IMPLANTE, MOVILIDAD, OTRO }

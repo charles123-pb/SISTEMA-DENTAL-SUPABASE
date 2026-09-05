@@ -1,0 +1,2 @@
+package pe.com.dentalamericana.copilot;
+public enum AiDraftType { RESUMEN_HISTORIA, BORRADOR_EVOLUCION, INDICACIONES_POSTCONSULTA, VERIFICACION_CIERRE }

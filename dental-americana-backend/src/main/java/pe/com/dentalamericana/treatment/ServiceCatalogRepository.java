@@ -1,0 +1,1 @@
+package pe.com.dentalamericana.treatment;import org.springframework.data.jpa.repository.JpaRepository;import java.util.List;public interface ServiceCatalogRepository extends JpaRepository<ServiceCatalog,Long>{List<ServiceCatalog>findAllByActivoTrueOrderByCategoriaAscNombreAsc();}
