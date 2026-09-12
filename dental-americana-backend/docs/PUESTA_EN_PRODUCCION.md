@@ -6,12 +6,14 @@
 |---|---|---|
 | Se crea o reprograma una cita | Encola confirmación por WhatsApp | Solo pacientes con autorización vigente |
 | Faltan 24 horas para la cita | Encola un recordatorio | Evita duplicados y cancela mensajes de horarios anteriores |
-| El paciente responde `CONFIRMO` | Confirma su próxima cita pendiente | Registra el cambio en el historial de la cita |
+| El paciente responde `CONFIRMO` | Confirma la cita del mensaje respondido; sin contexto, la próxima pendiente | Un teléfono compartido entre pacientes se deriva para revisión |
+| Se abre la historia desde la agenda | Inicia la atención vinculada | El cierre de la cita exige historia finalizada y aprobada |
+| Cambia el teléfono o se revoca la autorización | Cancela mensajes pendientes al despacharlos | Verifica el contacto y consentimiento otra vez antes del envío |
 | El paciente solicita cancelar o cambiar | Deriva la conversación para revisión | No cambia la agenda automáticamente |
 | Se finaliza una atención | Programa seguimiento postconsulta a 24 horas | No diagnostica; el odontólogo revisa las respuestas |
 | Se detectan palabras de alarma | Marca seguimiento como alerta | Nunca responde ni diagnostica automáticamente |
 | Meta informa entrega o lectura | Actualiza el estado del mensaje | Webhook firmado con el secreto de la aplicación |
-| Meta o la red fallan temporalmente | Reintenta a 1, 5 y 30 minutos | Máximo configurable; los errores definitivos quedan visibles |
+| Meta o la red fallan temporalmente | Reintenta a 1 y 5 minutos con el máximo predeterminado de 3 intentos | Si se aumenta el máximo, los siguientes reintentos esperan 30 minutos |
 
 ## Datos necesarios para Meta WhatsApp Cloud API
 
@@ -83,3 +85,38 @@ Guarde una segunda copia cifrada fuera del servidor y pruebe periódicamente la 
 - Revisión clínica final del odontograma, historia, presupuesto y constancias por el odontólogo responsable.
 
 Nunca almacene tokens, contraseñas ni respaldos en el repositorio.
+
+## Operación en este equipo
+
+Desde `dental-americana-backend`:
+
+```bash
+./ops/system.sh start
+./ops/system.sh status
+./ops/system.sh check http://localhost
+./ops/system.sh stop
+```
+
+Para continuar las pruebas sobre la base local que ya contiene la migración de demostración `V13`, use `./ops/system.sh start-demo`. Este comando conserva los volúmenes existentes, incluye `V13` y deshabilita WhatsApp. `start` usa el perfil de producción sin datos demo: una base con migraciones locales necesita un plan de transición validado antes de cambiarla a ese perfil; no borre el historial Flyway para forzar el arranque.
+
+Si el usuario no puede acceder al socket de Docker, estos comandos necesitan un usuario autorizado. En este equipo `sudo` pide la contraseña de administrador: ejecute `sudo ./ops/system.sh start` desde su terminal. El asistente no ha podido arrancar ni inspeccionar los contenedores por ese motivo. `stop` conserva los volúmenes y libera los recursos de los contenedores dentales.
+
+La dirección predeterminada es `http://localhost/sistema/login`; si cambió `WEB_PORT`, añada ese puerto. El odontograma se abre desde **Atención → paciente → Examen → Odontograma conectado**. Al seleccionar una pieza aparecen su nombre y lado del paciente.
+
+Cambiar la contraseña invalida las sesiones anteriores y vuelve al inicio de sesión. Esta actualización también requiere volver a iniciar sesión para reemplazar tokens emitidos antes de incorporar la versión de credenciales.
+
+## Verificación de módulos por API
+
+Con el sistema arrancado, exporte `DENTAL_USERNAME` y `DENTAL_PASSWORD` en su terminal y ejecute:
+
+```bash
+DENTAL_BASE_URL=http://localhost node ops/smoke-api.mjs
+```
+
+El script consulta pacientes, agenda, historias, cuentas, caja, mensajes, seguimientos, solicitudes y configuración. Para odontograma, tratamiento y copiloto utiliza una atención reciente; avisa si no hay datos. No muestra datos clínicos ni tokens y solo produce el evento normal de auditoría del login. No verifica envíos externos ni registra cobros.
+
+La compilación Angular no descarga fuentes; el navegador conserva las fuentes alternativas del sistema cuando Google Fonts no está disponible. Pruebas y compilaciones usan menos procesos para reducir el consumo de memoria.
+
+## Alcance pendiente de la puesta en servicio
+
+El copiloto actual genera borradores desde datos estructurados locales; no hay un proveedor de IA generativa conectado. Las constancias descargables son administrativas. La representación del odontograma y los registros clínicos requieren validación del odontólogo responsable antes del uso asistencial; esta entrega no acredita conformidad normativa integral. La prueba de restauración, HTTPS, credenciales reales y prueba Meta de envío/respuesta siguen pendientes hasta disponer del entorno autorizado.

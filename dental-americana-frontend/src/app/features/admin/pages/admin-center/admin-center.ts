@@ -2,6 +2,8 @@ import { CurrencyPipe, DatePipe } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { Router } from '@angular/router';
+import { AuthService } from '../../../../core/auth/auth.service';
 import {
   LucideActivity,
   LucideAlertTriangle,
@@ -57,6 +59,8 @@ type Tab = 'users' | 'settings' | 'audit' | 'reports';
 })
 export class AdminCenter implements OnInit {
   private readonly api = inject(AdminApiService);
+  private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
   private readonly fb = inject(FormBuilder).nonNullable;
   readonly tab = signal<Tab>('users');
   readonly users = signal<UserAccount[]>([]);
@@ -161,11 +165,20 @@ export class AdminCenter implements OnInit {
       this.error.set('La nueva contraseña debe coincidir y contener mayúscula, minúscula y número.');
       return;
     }
-    this.run(
-      this.api.changePassword(value.currentPassword, value.newPassword, value.confirmation),
-      'Contraseña actualizada correctamente.',
-      () => this.passwordForm.reset(),
-    );
+    this.saving.set(true);
+    this.error.set('');
+    this.api.changePassword(value.currentPassword, value.newPassword, value.confirmation).subscribe({
+      next: () => {
+        this.passwordForm.reset();
+        this.saving.set(false);
+        this.auth.logout();
+        void this.router.navigate(['/sistema/login']);
+      },
+      error: (error: HttpErrorResponse) => {
+        this.saving.set(false);
+        this.error.set(error.error?.message || 'No se pudo actualizar la contraseña.');
+      },
+    });
   }
   searchAudit(q: string) {
     this.loading.set(true);

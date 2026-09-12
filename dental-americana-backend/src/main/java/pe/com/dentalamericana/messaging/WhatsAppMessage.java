@@ -97,6 +97,7 @@ public class WhatsAppMessage {
     public void cancel() { if (estado == MessageStatus.PENDIENTE) estado = MessageStatus.CANCELADO; }
 
     public void providerStatus(MessageStatus status, String error) {
+        if (direccion != MessageDirection.SALIENTE || estado == MessageStatus.CANCELADO) return;
         if (status == MessageStatus.FALLIDO) { failed(error); return; }
         if (status == MessageStatus.LEIDO
                 || status == MessageStatus.ENTREGADO && estado != MessageStatus.LEIDO
@@ -104,6 +105,8 @@ public class WhatsAppMessage {
     }
 
     public boolean canRetry() { return intentos < maxAttempts; }
+
+    public void requireReview() { reviewRequired = true; }
 
     @PrePersist void create() {
         createdAt = Instant.now();

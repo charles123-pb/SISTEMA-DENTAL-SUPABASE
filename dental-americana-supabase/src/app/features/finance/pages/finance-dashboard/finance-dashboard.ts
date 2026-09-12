@@ -1,0 +1,351 @@
+import { CurrencyPipe, DatePipe } from '@angular/common';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  OnInit,
+  inject,
+  signal,
+} from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import {
+  LucideAlertTriangle,
+  LucideArrowDownRight,
+  LucideArrowUpRight,
+  LucideBanknote,
+  LucideCheck,
+  LucideCircleDollarSign,
+  LucideClock3,
+  LucideFileDown,
+  LucideLandmark,
+  LucideLoaderCircle,
+  LucideLockKeyhole,
+  LucidePlus,
+  LucideReceipt,
+  LucideRefreshCw,
+  LucideWalletCards,
+  LucideX,
+} from '@lucide/angular';
+import { forkJoin, Observable } from 'rxjs';
+import { AuthService } from '../../../../core/auth/auth.service';
+import { SupabaseErrorService } from '../../../../core/supabase/supabase-error.service';
+import { FinanceApiService } from '../../data-access/finance-api.service';
+import {
+  Account,
+  CashSession,
+  Expense,
+  FinanceDashboard,
+  Payment,
+  PaymentMethod,
+} from '../../models/finance.models';
+type FinanceTab = 'accounts' | 'payments' | 'expenses';
+@Component({
+  selector: 'app-finance-dashboard',
+  imports: [
+    ReactiveFormsModule,
+    CurrencyPipe,
+    DatePipe,
+    LucideAlertTriangle,
+    LucideArrowDownRight,
+    LucideArrowUpRight,
+    LucideBanknote,
+    LucideCheck,
+    LucideCircleDollarSign,
+    LucideClock3,
+    LucideFileDown,
+    LucideLandmark,
+    LucideLoaderCircle,
+    LucideLockKeyhole,
+    LucidePlus,
+    LucideReceipt,
+    LucideRefreshCw,
+    LucideWalletCards,
+    LucideX,
+  ],
+  templateUrl: './finance-dashboard.html',
+  styleUrl: './finance-dashboard.css',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+})
+export class FinanceDashboardPage implements OnInit {
+  private readonly fb = inject(FormBuilder).nonNullable;
+  private readonly api = inject(FinanceApiService);
+  private readonly auth = inject(AuthService);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly errors = inject(SupabaseErrorService);
+  private loadRequestId = 0;
+  readonly dashboard = signal<FinanceDashboard | null>(null);
+  readonly accounts = signal<Account[]>([]);
+  readonly methods = signal<PaymentMethod[]>([]);
+  readonly payments = signal<Payment[]>([]);
+  readonly expenses = signal<Expense[]>([]);
+  readonly cash = signal<CashSession | null>(null);
+  readonly loading = signal(true);
+  readonly saving = signal(false);
+  readonly exporting = signal(false);
+  readonly error = signal('');
+  readonly success = signal('');
+  readonly tab = signal<FinanceTab>('accounts');
+  readonly modal = signal<'payment' | 'expense' | 'open' | 'close' | null>(null);
+  readonly selectedAccount = signal<Account | null>(null);
+  readonly canWrite = signal(this.auth.hasPermission('FINANZA_ESCRIBIR'));
+  readonly paymentForm = this.fb.group({
+    methodId: this.fb.control<number | null>(null, Validators.required),
+    amount: [0, Validators.min(0.01)],
+    reference: ['', Validators.maxLength(120)],
+  });
+  readonly expenseForm = this.fb.group({
+    category: ['Insumos', [Validators.required, Validators.maxLength(80)]],
+    description: ['', [Validators.required, Validators.maxLength(500)]],
+    provider: ['', Validators.maxLength(150)],
+    documentReference: ['', Validators.maxLength(80)],
+    methodId: this.fb.control<number | null>(null, Validators.required),
+    amount: [0, Validators.min(0.01)],
+  });
+  readonly cashForm = this.fb.group({
+    amount: [0, [Validators.min(0), Validators.max(9_999_999_999.99)]],
+    observation: ['', Validators.maxLength(1000)],
+  });
+  ngOnInit(): void {
+    this.load();
+  }
+  downloadReceipt(payment: Payment): void {
+    const content = [
+      'CONSTANCIA ADMINISTRATIVA DE PAGO',
+      `Número: ${payment.receiptNumber}`,
+      `Estado: ${payment.status}`,
+      `Paciente: ${payment.patientName}`,
+      `Plan: ${payment.planCode}`,
+      `Monto: S/ ${payment.amount.toFixed(2)}`,
+      `Método: ${payment.paymentMethod}`,
+      `Referencia: ${payment.reference || 'Sin referencia'}`,
+      `Fecha: ${new Date(payment.registeredAt).toLocaleString('es-PE', { timeZone: 'America/Lima' })}`,
+      '',
+      'Esta constancia acredita el registro administrativo; no es un comprobante electrónico SUNAT.',
+    ].join('\n');
+    const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${payment.receiptNumber.replace(/[^a-zA-Z0-9_-]/g, '_')}.txt`;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  load(): void {
+    const requestId = ++this.loadRequestId;
+    const { from, to } = this.range();
+    this.loading.set(true);
+    this.error.set('');
+    forkJoin({
+      dashboard: this.api.dashboard(from, to),
+      accounts: this.api.accounts(),
+      methods: this.api.methods(),
+      payments: this.api.payments(from, to),
+      expenses: this.api.expenses(from, to),
+      cash: this.api.currentCash(),
+    })
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (r) => {
+          if (requestId !== this.loadRequestId) return;
+          this.dashboard.set(r.dashboard);
+          this.accounts.set(r.accounts);
+          this.methods.set(r.methods);
+          this.payments.set(r.payments);
+          this.expenses.set(r.expenses);
+          this.cash.set(r.cash);
+          this.loading.set(false);
+        },
+        error: (error: unknown) => {
+          if (requestId !== this.loadRequestId) return;
+          this.loading.set(false);
+          this.error.set(
+            this.errors.toUserMessage(error, 'No se pudo cargar la información financiera.'),
+          );
+        },
+      });
+  }
+  openPayment(a: Account): void {
+    if (!this.canWrite() || this.saving()) return;
+    if (!this.cash()) {
+      this.error.set('Abra la caja antes de registrar pagos.');
+      return;
+    }
+    this.selectedAccount.set(a);
+    this.paymentForm.reset({
+      methodId: this.methods()[0]?.id ?? null,
+      amount: a.balance,
+      reference: '',
+    });
+    this.modal.set('payment');
+    this.clear();
+  }
+  openExpense(): void {
+    if (!this.canWrite() || this.saving()) return;
+    if (!this.cash()) {
+      this.error.set('Abra la caja antes de registrar gastos.');
+      return;
+    }
+    this.expenseForm.reset({
+      category: 'Insumos',
+      description: '',
+      provider: '',
+      documentReference: '',
+      methodId: this.methods()[0]?.id ?? null,
+      amount: 0,
+    });
+    this.modal.set('expense');
+    this.clear();
+  }
+  openCash(): void {
+    if (!this.canWrite() || this.cash() || this.saving()) return;
+    this.cashForm.reset({ amount: 0, observation: '' });
+    this.modal.set('open');
+    this.clear();
+  }
+  closeCash(): void {
+    if (!this.canWrite() || !this.cash() || this.saving()) return;
+    this.cashForm.reset({ amount: this.cash()?.expectedAmount ?? 0, observation: '' });
+    this.modal.set('close');
+    this.clear();
+  }
+  savePayment(): void {
+    const a = this.selectedAccount();
+    if (!a || !this.cash() || !this.canWrite() || this.saving() || this.paymentForm.invalid) {
+      this.paymentForm.markAllAsTouched();
+      return;
+    }
+    const v = this.paymentForm.getRawValue(),
+      m = this.methods().find((x) => x.id === v.methodId);
+    if (m?.referenceRequired && !v.reference.trim()) {
+      this.error.set('Este método requiere número de operación o referencia.');
+      return;
+    }
+    if (v.amount > a.balance) {
+      this.error.set('El pago no puede superar el saldo.');
+      return;
+    }
+    this.run(
+      this.api.pay(a.id, v.methodId!, v.amount, v.reference.trim() || null),
+      'Pago registrado y constancia generada.',
+    );
+  }
+  saveExpense(): void {
+    if (!this.cash() || !this.canWrite() || this.saving() || this.expenseForm.invalid) {
+      this.expenseForm.markAllAsTouched();
+      return;
+    }
+    const v = this.expenseForm.getRawValue();
+    const method = this.methods().find((item) => item.id === v.methodId);
+    if (method?.referenceRequired && !v.documentReference.trim()) {
+      this.error.set('Este método requiere documento o número de operación.');
+      return;
+    }
+    this.run(
+      this.api.expense({
+        category: v.category.trim(),
+        description: v.description.trim(),
+        provider: v.provider.trim() || null,
+        documentReference: v.documentReference.trim() || null,
+        paymentMethodId: v.methodId!,
+        amount: v.amount,
+      }),
+      'Gasto registrado en caja.',
+    );
+  }
+  saveCash(): void {
+    const mode = this.modal();
+    if (
+      !this.canWrite() ||
+      this.saving() ||
+      this.cashForm.invalid ||
+      !['open', 'close'].includes(mode ?? '')
+    ) {
+      this.cashForm.markAllAsTouched();
+      return;
+    }
+    if (mode === 'close' && !this.cash()) {
+      this.error.set('No existe una caja abierta para cerrar.');
+      return;
+    }
+    const v = this.cashForm.getRawValue();
+    const request =
+      mode === 'open'
+        ? this.api.openCash(v.amount)
+        : this.api.closeCash(
+            this.cash()?.id ?? 0,
+            v.amount,
+            v.observation.trim() || null,
+            this.cash()?.version ?? -1,
+          );
+    this.run(request, mode === 'open' ? 'Caja abierta.' : 'Caja cerrada y conciliada.');
+  }
+  downloadReport(): void {
+    if (this.exporting()) return;
+    const { from, to } = this.range();
+    this.exporting.set(true);
+    this.api
+      .exportReport(from, to)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (blob) => {
+          const a = document.createElement('a');
+          const url = URL.createObjectURL(blob);
+          a.href = url;
+          a.download = 'Reporte_Dental_Americana.csv';
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+          this.exporting.set(false);
+        },
+        error: (error: unknown) => {
+          this.exporting.set(false);
+          this.error.set(this.errors.toUserMessage(error, 'No se pudo exportar el reporte.'));
+        },
+      });
+  }
+  closeModal(): void {
+    if (!this.saving()) this.modal.set(null);
+  }
+  methodNeedsReference(): boolean {
+    return (
+      this.methods().find((x) => x.id === this.paymentForm.controls.methodId.value)
+        ?.referenceRequired ?? false
+    );
+  }
+  expenseMethodNeedsReference(): boolean {
+    return (
+      this.methods().find((x) => x.id === this.expenseForm.controls.methodId.value)
+        ?.referenceRequired ?? false
+    );
+  }
+  label(v: string): string {
+    return v.replaceAll('_', ' ').toLowerCase();
+  }
+  private run<T>(request: Observable<T>, message: string): void {
+    if (this.saving()) return;
+    this.saving.set(true);
+    this.clear();
+    request.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: () => {
+        this.saving.set(false);
+        this.modal.set(null);
+        this.success.set(message);
+        this.load();
+      },
+      error: (e: unknown) => {
+        this.saving.set(false);
+        this.error.set(this.errors.toUserMessage(e, 'No se pudo registrar la operación.'));
+      },
+    });
+  }
+  private range() {
+    const from = new Date();
+    from.setHours(0, 0, 0, 0);
+    const to = new Date(from);
+    to.setDate(to.getDate() + 1);
+    return { from: from.toISOString(), to: to.toISOString() };
+  }
+  private clear() {
+    this.error.set('');
+    this.success.set('');
+  }
+}

@@ -25,6 +25,11 @@ public class AiDraft {
     protected AiDraft() {}
     public AiDraft(Long encounterId,Long patientId,AiDraftType type,String content,String sourceData,String missingFields,String warning,Long actor){this.encounterId=encounterId;this.patientId=patientId;this.tipo=type;this.estado=AiDraftStatus.BORRADOR;this.contenido=content;this.sourceData=sourceData;this.missingFields=missingFields;this.advertencia=warning;this.generatedBy=actor;}
     public void approve(Long actor){requireDraft();estado=AiDraftStatus.APROBADO;reviewedBy=actor;reviewedAt=Instant.now();}
+    public void edit(String content) {
+        requireDraft();
+        if (content == null || content.isBlank() || content.length() > 20000) throw new IllegalStateException("El contenido debe tener entre 1 y 20000 caracteres");
+        contenido = content.trim();
+    }
     public void reject(Long actor,String reason){requireDraft();estado=AiDraftStatus.RECHAZADO;rejectionReason=reason;reviewedBy=actor;reviewedAt=Instant.now();}
     private void requireDraft(){if(estado!=AiDraftStatus.BORRADOR)throw new IllegalStateException("El borrador ya fue revisado");}
     @PrePersist void create(){generatedAt=Instant.now();}

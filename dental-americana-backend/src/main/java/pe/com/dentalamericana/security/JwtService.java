@@ -10,6 +10,10 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.stereotype.Service;
 
 import javax.crypto.SecretKey;
+import javax.crypto.Mac;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Base64;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Date;
@@ -32,6 +36,7 @@ public class JwtService {
         return Jwts.builder()
                 .subject(user.getUsername())
                 .claim("uid", user.getId())
+                .claim("credentialVersion", credentialVersion(user))
                 .claim("name", user.getFullName())
                 .claim("authorities", authorities)
                 .issuedAt(Date.from(now))
@@ -45,13 +50,28 @@ public class JwtService {
     public boolean isValid(String token, AuthenticatedUser user) {
         try {
             Claims claims = claims(token);
-            return claims.getSubject().equals(user.getUsername()) && claims.getExpiration().after(new Date());
+            String credential = claims.get("credentialVersion", String.class);
+            return user.isEnabled() && user.isAccountNonLocked()
+                    && claims.getSubject().equals(user.getUsername()) && claims.getExpiration().after(new Date())
+                    && credential != null && MessageDigest.isEqual(credential.getBytes(StandardCharsets.UTF_8),
+                            credentialVersion(user).getBytes(StandardCharsets.UTF_8));
         } catch (JwtException | IllegalArgumentException exception) {
             return false;
         }
     }
 
     public long getExpirationSeconds() { return expirationMinutes * 60; }
+
+    private String credentialVersion(AuthenticatedUser user) {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(signingKey);
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(
+                    mac.doFinal(user.getPassword().getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.GeneralSecurityException exception) {
+            throw new IllegalStateException("No se pudo verificar la versión de credenciales", exception);
+        }
+    }
 
     private Claims claims(String token) {
         return Jwts.parser().verifyWith(signingKey).build().parseSignedClaims(token).getPayload();

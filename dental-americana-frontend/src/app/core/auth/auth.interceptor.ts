@@ -13,7 +13,7 @@ export const authInterceptor: HttpInterceptorFn = (request, next) => {
     : request;
 
   return next(authenticatedRequest).pipe(catchError((error: { status?: number }) => {
-    if (error.status === 401 && !request.url.endsWith('/auth/login')) {
+    if (error.status === 401 && !request.url.endsWith('/auth/login') && !request.url.endsWith('/auth/password')) {
       auth.logout();
       void router.navigate(['/sistema/login']);
     }

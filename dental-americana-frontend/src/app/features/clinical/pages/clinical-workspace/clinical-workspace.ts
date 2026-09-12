@@ -2,7 +2,7 @@ import { DatePipe } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import {
   LucideActivity, LucideAlertTriangle, LucideArrowLeft, LucideCalendarDays, LucideCheck,
   LucideClipboardCheck, LucideFileHeart, LucideHeartPulse, LucideHistory, LucideLoaderCircle,
@@ -35,6 +35,7 @@ export class ClinicalWorkspace implements OnInit {
   private readonly appointmentApi = inject(AppointmentApiService);
   private readonly patientApi = inject(PatientApiService);
   private readonly auth = inject(AuthService);
+  private readonly route = inject(ActivatedRoute);
 
   readonly appointments = signal<Appointment[]>([]);
   readonly encounters = signal<ClinicalEncounter[]>([]);
@@ -53,11 +54,11 @@ export class ClinicalWorkspace implements OnInit {
 
   readonly activeAllergies = computed(() => this.patient()?.allergies.filter((item) => item.status === 'ACTIVA') ?? []);
   readonly worklist = computed(() => this.appointments().filter((item) => !['CANCELADA', 'NO_ASISTIO', 'COMPLETADA'].includes(item.status)));
-  readonly completion = computed(() => {
+  completion(): number {
     const form = this.form.getRawValue();
     const required = [form.consultationReason, form.dentalExam, form.diagnosis, form.workPlan, form.patientConsent];
     return Math.round(required.filter(Boolean).length / required.length * 100);
-  });
+  }
 
   readonly form = this.fb.group({
     consultationReason: ['', Validators.maxLength(1000)], illnessDuration: ['', Validators.maxLength(250)],
@@ -74,7 +75,16 @@ export class ClinicalWorkspace implements OnInit {
     dischargeObservation: ['', Validators.maxLength(1000)], patientConsent: [false],
   });
 
-  ngOnInit(): void { this.loadWorkday(); }
+  ngOnInit(): void {
+    this.loadWorkday();
+    const appointmentId = Number(this.route.snapshot.queryParamMap.get('appointmentId'));
+    if (appointmentId > 0) {
+      this.appointmentApi.get(appointmentId).subscribe({
+        next: appointment => this.openAppointment(appointment),
+        error: () => this.error.set('No se pudo abrir la cita seleccionada.'),
+      });
+    }
+  }
   hasEncounter(appointmentId: number): boolean { return this.encounters().some((item) => item.appointmentId === appointmentId); }
 
   loadWorkday(): void {

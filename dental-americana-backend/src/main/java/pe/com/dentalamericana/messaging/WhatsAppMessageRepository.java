@@ -9,6 +9,7 @@ import java.util.Optional;
 
 public interface WhatsAppMessageRepository extends JpaRepository<WhatsAppMessage, Long> {
     List<WhatsAppMessage> findTop50ByOrderByCreatedAtDesc();
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
     List<WhatsAppMessage> findTop25ByEstadoAndScheduledForLessThanEqualOrderByScheduledForAsc(MessageStatus status, Instant due);
     List<WhatsAppMessage> findAllByConversationIdOrderByCreatedAtAsc(Long conversationId);
     List<WhatsAppMessage> findAllByAppointmentIdAndEstado(Long appointmentId, MessageStatus status);

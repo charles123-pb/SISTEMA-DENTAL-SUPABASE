@@ -2,7 +2,7 @@ import { DatePipe } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import {
   LucideAlertTriangle, LucideArrowLeft, LucideArrowRight, LucideCalendarDays,
   LucideCheck, LucideChevronDown, LucideClock3, LucideEdit3, LucideLoaderCircle,
@@ -31,6 +31,7 @@ export class Agenda implements OnInit {
   private readonly api = inject(AppointmentApiService);
   private readonly patientsApi = inject(PatientApiService);
   private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
 
   readonly appointments = signal<Appointment[]>([]);
   readonly types = signal<AppointmentType[]>([]);
@@ -168,6 +169,10 @@ export class Agenda implements OnInit {
   }
 
   advance(item: Appointment): void {
+    if (item.status === 'EN_ESPERA' || item.status === 'EN_ATENCION') {
+      void this.router.navigate(['/sistema/atencion'], { queryParams: { appointmentId: item.id } });
+      return;
+    }
     const next = this.nextStatus(item.status); if (!next) return;
     this.updateStatus(item, next.status, undefined, next.success);
   }
@@ -184,7 +189,7 @@ export class Agenda implements OnInit {
   }
 
   nextActionLabel(status: AppointmentStatus): string {
-    return ({ PENDIENTE_CONFIRMACION: 'Confirmar', CONFIRMADA: 'Registrar llegada', EN_ESPERA: 'Iniciar atención', EN_ATENCION: 'Completar' } as Partial<Record<AppointmentStatus, string>>)[status] ?? '';
+    return ({ PENDIENTE_CONFIRMACION: 'Confirmar', CONFIRMADA: 'Registrar llegada', EN_ESPERA: 'Iniciar atención', EN_ATENCION: 'Abrir historia' } as Partial<Record<AppointmentStatus, string>>)[status] ?? '';
   }
 
   statusLabel(status: AppointmentStatus): string { return status.replaceAll('_', ' ').toLowerCase(); }

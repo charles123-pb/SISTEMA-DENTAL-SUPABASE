@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 
 import java.util.List;
 import java.util.Map;
@@ -27,7 +28,10 @@ public class MetaWhatsAppGateway implements WhatsAppGateway {
                                @Value("${app.whatsapp.template-language:es_PE}") String languageCode) {
         if (phoneId == null || phoneId.isBlank()) throw new IllegalStateException("Falta WHATSAPP_PHONE_NUMBER_ID");
         if (token == null || token.isBlank()) throw new IllegalStateException("Falta WHATSAPP_ACCESS_TOKEN");
-        this.client = builder.baseUrl(base).defaultHeader("Authorization", "Bearer " + token).build();
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5000);
+        factory.setReadTimeout(15000);
+        this.client = builder.requestFactory(factory).baseUrl(base).defaultHeader("Authorization", "Bearer " + token).build();
         this.mapper = mapper;
         this.phoneId = phoneId.trim();
         this.languageCode = languageCode.trim();

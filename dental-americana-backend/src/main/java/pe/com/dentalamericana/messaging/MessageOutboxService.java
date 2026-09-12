@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pe.com.dentalamericana.appointment.AppointmentRepository;
 import pe.com.dentalamericana.patient.Patient;
+import pe.com.dentalamericana.patient.PatientRepository;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -26,6 +27,7 @@ public class MessageOutboxService {
     private final WhatsAppMessageRepository messages;
     private final PostConsultationFollowUpRepository followUps;
     private final AppointmentRepository appointments;
+    private final PatientRepository patients;
     private final WhatsAppGateway gateway;
     private final PhoneNumberNormalizer phoneNumbers;
     private final ObjectMapper mapper;
@@ -38,6 +40,7 @@ public class MessageOutboxService {
                                 WhatsAppMessageRepository messages,
                                 PostConsultationFollowUpRepository followUps,
                                 AppointmentRepository appointments,
+                                PatientRepository patients,
                                 WhatsAppGateway gateway,
                                 PhoneNumberNormalizer phoneNumbers,
                                 ObjectMapper mapper,
@@ -49,6 +52,7 @@ public class MessageOutboxService {
         this.messages = messages;
         this.followUps = followUps;
         this.appointments = appointments;
+        this.patients = patients;
         this.gateway = gateway;
         this.phoneNumbers = phoneNumbers;
         this.mapper = mapper;
@@ -125,6 +129,23 @@ public class MessageOutboxService {
                 message.failed("Conversación no encontrada");
                 continue;
             }
+            Patient patient = message.getPatientId() == null ? null
+                    : patients.findById(message.getPatientId()).orElse(null);
+            if (patient == null || !canMessage(patient)
+                    || !phoneNumbers.outbound(patient.getMobile()).equals(conversation.getPhone())) {
+                message.cancel();
+                followUps.findByMessageId(message.getId()).ifPresent(followUp ->
+                        followUp.closeWithoutMessage("AUTORIZACION_O_CONTACTO_CAMBIO"));
+                continue;
+            }
+            if (message.getAppointmentId() != null) {
+                var appointment = appointments.findById(message.getAppointmentId()).orElse(null);
+                if (appointment == null || appointment.getStatus().finalState()
+                        || !appointment.getStart().isAfter(Instant.now())) {
+                    message.cancel();
+                    continue;
+                }
+            }
             message.registerAttempt();
             WhatsAppGateway.GatewayResult result = gateway.send(conversation.getPhone(), message);
             if (result.sent()) {
@@ -160,7 +181,7 @@ public class MessageOutboxService {
     }
 
     private boolean canMessage(Patient patient) {
-        if (patient.getMobile() == null || !patient.isWhatsAppConsent()) return false;
+        if (!patient.isActive() || patient.getMobile() == null || !patient.isWhatsAppConsent()) return false;
         try {
             phoneNumbers.outbound(patient.getMobile());
             return true;

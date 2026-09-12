@@ -5,6 +5,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pe.com.dentalamericana.appointment.*;
 import pe.com.dentalamericana.audit.*;
+import pe.com.dentalamericana.booking.PublicBookingRequest;
+import pe.com.dentalamericana.booking.PublicBookingRequestRepository;
 import pe.com.dentalamericana.common.ResourceNotFoundException;
 import pe.com.dentalamericana.messaging.dto.MessagingDtos.*;
 import pe.com.dentalamericana.patient.*;
@@ -18,7 +20,7 @@ public class MessagingService implements MetaWebhookEventHandler {
     private static final List<String> ALERTS = List.of(
             "sangrado abundante", "no para de sangrar", "fiebre", "hinchazón severa",
             "hinchazon severa", "dificultad para respirar", "dolor insoportable", "alergia");
-    private static final Set<String> APPOINTMENT_INTENTS = Set.of("CONFIRMAR", "REPROGRAMAR", "CANCELAR");
+    private static final Set<String> APPOINTMENT_INTENTS = Set.of("CONFIRMAR", "REPROGRAMAR", "CANCELAR", "RESERVAR");
 
     private final WhatsAppMessageRepository messages;
     private final WhatsAppConversationRepository conversations;
@@ -30,12 +32,14 @@ public class MessagingService implements MetaWebhookEventHandler {
     private final MessageOutboxService outbox;
     private final PhoneNumberNormalizer phoneNumbers;
     private final AuditService audit;
+    private final PublicBookingRequestRepository bookingRequests;
 
     public MessagingService(WhatsAppMessageRepository messages, WhatsAppConversationRepository conversations,
                             PostConsultationFollowUpRepository followups, PatientRepository patientRepo,
                             PatientService patients, AppointmentRepository appointments,
                             AppointmentStatusHistoryRepository histories, MessageOutboxService outbox,
-                            PhoneNumberNormalizer phoneNumbers, AuditService audit) {
+                            PhoneNumberNormalizer phoneNumbers, AuditService audit,
+                            PublicBookingRequestRepository bookingRequests) {
         this.messages = messages;
         this.conversations = conversations;
         this.followups = followups;
@@ -46,6 +50,7 @@ public class MessagingService implements MetaWebhookEventHandler {
         this.outbox = outbox;
         this.phoneNumbers = phoneNumbers;
         this.audit = audit;
+        this.bookingRequests = bookingRequests;
     }
 
     @Transactional(readOnly = true)
@@ -73,18 +78,23 @@ public class MessagingService implements MetaWebhookEventHandler {
             if (duplicate.isPresent()) return message(duplicate.get());
         }
         String phone = phoneNumbers.outbound(rawPhone);
-        Patient patient = patientRepo.findFirstByCelularIn(phoneNumbers.lookupCandidates(phone)).orElse(null);
+        List<Patient> matches = patientRepo.findAllByCelularIn(phoneNumbers.lookupCandidates(phone));
+        Patient patient = matches.size() == 1 && matches.get(0).isActive() ? matches.get(0) : null;
         WhatsAppConversation conversation = conversations
                 .findFirstByTelefonoAndEstadoNot(phone, ConversationStatus.CERRADA)
                 .orElseGet(() -> conversations.save(new WhatsAppConversation(patient == null ? null : patient.getId(), phone)));
         String text = content.trim();
         String intent = classify(text);
-        boolean review = Set.of("REPROGRAMAR", "CANCELAR", "NO_ENTENDIDO", "ALERTA_CLINICA").contains(intent);
+        boolean review = patient == null || !"AYUDA".equals(intent);
         WhatsAppMessage received = messages.save(WhatsAppMessage.incoming(conversation.getId(),
                 patient == null ? null : patient.getId(), providerId, text, intent, review));
         conversation.touch();
         if (review) conversation.derive();
         if (patient != null) processPatientReply(patient, text, intent, contextProviderId);
+        else if ("RESERVAR".equals(intent) || "REPROGRAMAR".equals(intent)) {
+            bookingRequests.save(new PublicBookingRequest("Contacto WhatsApp por identificar", null, phone, null,
+                    "Solicitud WhatsApp", null, "INDIFERENTE", text));
+        }
         return message(received);
     }
 
@@ -112,11 +122,21 @@ public class MessagingService implements MetaWebhookEventHandler {
     }
 
     private void processPatientReply(Patient patient, String text, String intent, String contextProviderId) {
-        if ("CONFIRMAR".equals(intent)) confirmNextAppointment(patient);
+        if ("CONFIRMAR".equals(intent)) confirmAppointment(patient, contextProviderId);
+        if ("CANCELAR".equals(intent)) cancelAppointment(patient, contextProviderId);
+        if ("REPROGRAMAR".equals(intent)) createCoordinationRequest(patient, "REPROGRAMACIÓN", text, contextProviderId);
+        if ("RESERVAR".equals(intent)) createCoordinationRequest(patient, "NUEVA CITA", text, null);
+        if ("ALERTA_CLINICA".equals(intent)) {
+            reply(patient, "Recibimos su mensaje y lo derivamos al odontólogo para revisión prioritaria. Si tiene dificultad para respirar o una emergencia, acuda a urgencias.");
+        }
+        if ("NO_ENTENDIDO".equals(intent) || "AYUDA".equals(intent)) {
+            reply(patient, "Puedo ayudarle con su cita. Responda CONFIRMO, CANCELAR, REPROGRAMAR o RESERVAR. Si necesita atención clínica, escriba su consulta y la revisará el odontólogo.");
+        }
         PostConsultationFollowUp followUp = contextualFollowUp(contextProviderId);
+        if (followUp != null && !followUp.getPatientId().equals(patient.getId())) return;
         if (followUp == null && !APPOINTMENT_INTENTS.contains(intent)) {
             followUp = followups.findFirstByPatientIdAndEstadoInOrderByScheduledForDesc(patient.getId(),
-                    List.of(FollowUpStatus.PROGRAMADO, FollowUpStatus.ENVIADO)).orElse(null);
+                    List.of(FollowUpStatus.ENVIADO)).orElse(null);
         }
         if (followUp != null) {
             String alert = alertReason(text);
@@ -131,23 +151,101 @@ public class MessagingService implements MetaWebhookEventHandler {
                 .orElse(null);
     }
 
-    private void confirmNextAppointment(Patient patient) {
-        appointments.findFirstByPatientIdAndInicioAfterAndEstadoOrderByInicioAsc(
-                patient.getId(), Instant.now(), AppointmentStatus.PENDIENTE_CONFIRMACION).ifPresent(appointment -> {
+    private void confirmAppointment(Patient patient, String contextProviderId) {
+        selectAppointment(patient, contextProviderId).ifPresent(appointment -> {
+            if (appointment.getStatus() == AppointmentStatus.PENDIENTE_CONFIRMACION) confirm(appointment);
+            reply(patient, "Su cita del " + appointmentTime(appointment) + " está confirmada.");
+        });
+    }
+
+    private void confirm(Appointment appointment) {
             AppointmentStatus before = appointment.getStatus();
             appointment.changeStatus(AppointmentStatus.CONFIRMADA, null, appointment.getUpdatedBy());
             histories.save(new AppointmentStatusHistory(appointment.getId(), before, AppointmentStatus.CONFIRMADA,
                     "Confirmado por WhatsApp", appointment.getUpdatedBy()));
+            audit.record(null, "WHATSAPP_CONFIRMAR_CITA", "CITA", appointment.getId().toString(), AuditResult.EXITO,
+                    "Acción solicitada por paciente " + appointment.getPatientId(), null);
+    }
+
+    /** Cancels only an upcoming appointment belonging to this patient. A clinical encounter is never altered by WhatsApp. */
+    private void cancelAppointment(Patient patient, String contextProviderId) {
+        selectAppointment(patient, contextProviderId).ifPresent(appointment -> {
+            AppointmentStatus previous = appointment.getStatus();
+            appointment.changeStatus(AppointmentStatus.CANCELADA, "Cancelada por el paciente vía WhatsApp", appointment.getUpdatedBy());
+            outbox.cancelPendingAppointmentMessages(appointment.getId());
+            histories.save(new AppointmentStatusHistory(appointment.getId(), previous, AppointmentStatus.CANCELADA,
+                    "Cancelada automáticamente por WhatsApp", appointment.getUpdatedBy()));
+            audit.record(null, "WHATSAPP_CANCELAR_CITA", "CITA", appointment.getId().toString(), AuditResult.EXITO,
+                    "Acción solicitada por paciente " + patient.getId(), null);
+            reply(patient, "Su cita del " + appointmentTime(appointment) + " fue cancelada. Si desea una nueva fecha, responda RESERVAR.");
         });
+    }
+
+    private Optional<Appointment> selectAppointment(Patient patient, String contextProviderId) {
+        if (contextProviderId != null && !contextProviderId.isBlank()) {
+            Optional<Appointment> selected = appointmentFromContext(patient, contextProviderId);
+            if (selected.isEmpty()) reply(patient, "El mensaje citado no corresponde a una cita futura disponible. No cambiamos ninguna cita; el odontólogo revisará su solicitud.");
+            return selected.filter(a -> canAutomateAppointment(patient, a));
+        }
+        List<Appointment> eligible = appointments.findAllByPatientIdAndInicioAfterAndEstadoInOrderByInicioAsc(
+                patient.getId(), Instant.now(), List.of(AppointmentStatus.PENDIENTE_CONFIRMACION, AppointmentStatus.CONFIRMADA));
+        if (eligible.size() == 1) return Optional.of(eligible.get(0)).filter(a -> canAutomateAppointment(patient, a));
+        reply(patient, eligible.isEmpty() ? "No encontramos una cita futura. Para solicitar una nueva, escriba RESERVAR."
+                : "Tiene varias citas futuras. Responda al mensaje de la cita que desea modificar usando la opción Responder de WhatsApp, o solicite ayuda al odontólogo.");
+        return Optional.empty();
+    }
+
+    private boolean canAutomateAppointment(Patient patient, Appointment appointment) {
+        if (!appointments.hasClinicalEncounter(appointment.getId())) return true;
+        reply(patient, "Esta cita tiene una atención clínica registrada. El odontólogo revisará su solicitud antes de modificarla.");
+        return false;
+    }
+
+    private String appointmentTime(Appointment appointment) {
+        return java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")
+                .withZone(java.time.ZoneId.of("America/Lima")).format(appointment.getStart());
+    }
+
+    private Optional<Appointment> appointmentFromContext(Patient patient, String contextProviderId) {
+        if (contextProviderId == null || contextProviderId.isBlank()) return Optional.empty();
+        return messages.findByProviderId(contextProviderId)
+                .filter(message -> patient.getId().equals(message.getPatientId()) && message.getAppointmentId() != null)
+                .flatMap(message -> appointments.findById(message.getAppointmentId()))
+                .filter(appointment -> appointment.getPatientId().equals(patient.getId())
+                        && appointment.getStart().isAfter(Instant.now())
+                        && Set.of(AppointmentStatus.PENDIENTE_CONFIRMACION, AppointmentStatus.CONFIRMADA).contains(appointment.getStatus()));
+    }
+
+    private void createCoordinationRequest(Patient patient, String kind, String text, String contextProviderId) {
+        Optional<Appointment> related = "REPROGRAMACIÓN".equals(kind) ? selectAppointment(patient, contextProviderId) : Optional.empty();
+        if ("REPROGRAMACIÓN".equals(kind) && related.isEmpty()) return;
+        String note = "Solicitud por WhatsApp: " + kind
+                + related.map(a -> "; cita #" + a.getId() + " del " + appointmentTime(a)).orElse("")
+                + ". Mensaje: " + text;
+        boolean existing = bookingRequests.findAllByEstadoOrderByCreatedAtDesc(pe.com.dentalamericana.booking.BookingRequestStatus.PENDIENTE)
+                .stream().anyMatch(r -> phoneNumbers.outbound(patient.getMobile()).equals(r.getMobile())
+                        && kind.equals(r.getService()) && r.getMessage() != null
+                        && (related.isEmpty() || r.getMessage().contains("cita #" + related.get().getId() + " del ")));
+        if (existing) {
+            reply(patient, "Su solicitud ya está pendiente. El odontólogo coordinará el horario; la cita actual se conserva hasta confirmar el cambio.");
+            return;
+        }
+        bookingRequests.save(new PublicBookingRequest(patientName(patient), null, phoneNumbers.outbound(patient.getMobile()), null,
+                kind, null, "INDIFERENTE", note));
+        reply(patient, "Registramos su solicitud de " + kind.toLowerCase(Locale.ROOT)
+                + ". El odontólogo le propondrá un horario disponible. Su solicitud todavía no cambia la agenda.");
+    }
+
+    private void reply(Patient patient, String content) {
+        if (patient.isWhatsAppConsent() && patient.getMobile() != null) {
+            outbox.queueManual(patient, content, Instant.now(), null);
+        }
     }
 
     private String classify(String text) {
         String normalized = text.toLowerCase(Locale.ROOT);
         if (ALERTS.stream().anyMatch(normalized::contains)) return "ALERTA_CLINICA";
-        if (normalized.contains("confirmo") || normalized.equals("si") || normalized.equals("sí")) return "CONFIRMAR";
-        if (normalized.contains("reprogram") || normalized.contains("cambiar") || normalized.contains("otro horario")) return "REPROGRAMAR";
-        if (normalized.contains("cancel")) return "CANCELAR";
-        return "NO_ENTENDIDO";
+        return AppointmentIntentClassifier.classify(text);
     }
 
     private String alertReason(String text) {

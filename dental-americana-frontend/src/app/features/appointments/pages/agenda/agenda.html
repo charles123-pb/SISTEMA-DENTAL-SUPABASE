@@ -1,7 +1,7 @@
 <section class="agenda-page">
   <header class="page-heading">
     <div><span class="eyebrow">Agenda clínica</span><h1>Organiza el día sin perder el contexto</h1><p>Consulta horarios, confirma citas y acompaña el avance de cada paciente.</p></div>
-    <div class="heading-actions"><a routerLink="/sistema/agenda/solicitudes"><svg lucideMessageCircle></svg>Solicitudes web</a>@if (canWrite()) {<button class="primary" (click)="openNew()"><svg lucidePlus></svg>Nueva cita</button>}</div>
+    <div class="heading-actions"><a routerLink="/sistema/agenda/solicitudes"><svg lucideMessageCircle></svg>Solicitudes web y WhatsApp</a>@if (canWrite()) {<button class="primary" (click)="openNew()"><svg lucidePlus></svg>Nueva cita</button>}</div>
   </header>
 
   @if (error() && !modalOpen()) {<div class="message error"><svg lucideAlertTriangle></svg>{{ error() }}</div>}

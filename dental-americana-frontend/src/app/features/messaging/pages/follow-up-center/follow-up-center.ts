@@ -3,6 +3,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   OnInit,
   computed,
   inject,
@@ -23,7 +24,9 @@ import {
   LucideShieldAlert,
   LucideX,
 } from '@lucide/angular';
-import { forkJoin } from 'rxjs';
+import { forkJoin, interval } from 'rxjs';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { RouterLink } from '@angular/router';
 import { AuthService } from '../../../../core/auth/auth.service';
 import { PatientApiService } from '../../../patients/data-access/patient-api.service';
 import { PatientSummary } from '../../../patients/models/patient.models';
@@ -33,6 +36,7 @@ type Tab = 'followups' | 'messages';
 @Component({
   selector: 'app-follow-up-center',
   imports: [
+    RouterLink,
     ReactiveFormsModule,
     DatePipe,
     LucideAlertTriangle,
@@ -54,6 +58,7 @@ type Tab = 'followups' | 'messages';
 })
 export class FollowUpCenter implements OnInit {
   private readonly fb = inject(FormBuilder).nonNullable;
+  private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(MessagingApiService);
   private readonly patientApi = inject(PatientApiService);
   private readonly auth = inject(AuthService);
@@ -78,6 +83,9 @@ export class FollowUpCenter implements OnInit {
   });
   ngOnInit() {
     this.load();
+    interval(15000).pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
+      if (!this.loading() && !this.saving() && !document.hidden) this.load();
+    });
   }
   load() {
     this.loading.set(true);

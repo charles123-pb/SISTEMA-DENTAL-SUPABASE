@@ -1,0 +1,40 @@
+project_id = "dental-americana"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+
+[db]
+port = 54322
+major_version = 17
+
+[db.seed]
+enabled = false
+
+[auth]
+enabled = true
+site_url = "http://localhost:4200"
+additional_redirect_urls = ["http://localhost:4200/sistema/login"]
+
+[functions.whatsapp-webhook]
+verify_jwt = false
+
+[functions.whatsapp-dispatch]
+verify_jwt = false
+
+[functions.whatsapp-session]
+verify_jwt = false
+
+[functions.whatsapp-send]
+verify_jwt = false
+
+[functions.whatsapp-sync]
+verify_jwt = false
+
+[functions.copilot-generate]
+verify_jwt = false
+
+[functions.auth-login]
+verify_jwt = false

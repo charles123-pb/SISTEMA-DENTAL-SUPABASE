@@ -17,17 +17,24 @@ public interface PatientRepository extends JpaRepository<Patient, Long>, JpaSpec
     boolean existsByDocumentNumberIgnoreCaseAndIdNot(String documentNumber, Long id);
     Optional<Patient> findFirstByCelular(String mobile);
     Optional<Patient> findFirstByCelularIn(List<String> mobiles);
+    List<Patient> findAllByCelularIn(List<String> mobiles);
 
-    @Query("""
-            select p from Patient p
-            where (:documentNumber is not null and lower(p.documentNumber) = lower(:documentNumber))
-               or (:mobile is not null and p.celular = :mobile)
-               or (:birthDate is not null and :paternalSurname is not null
-                   and p.birthDate = :birthDate and lower(p.paternalSurname) = lower(:paternalSurname))
-            order by p.updatedAt desc
-            """)
-    List<Patient> findDuplicateCandidates(@Param("documentNumber") String documentNumber,
-                                          @Param("mobile") String mobile,
-                                          @Param("birthDate") LocalDate birthDate,
-                                          @Param("paternalSurname") String paternalSurname);
+    default List<Patient> findDuplicateCandidates(String documentNumber, String mobile,
+                                                  LocalDate birthDate, String paternalSurname) {
+        return findAll((root, query, cb) -> {
+            var alternatives = new java.util.ArrayList<jakarta.persistence.criteria.Predicate>();
+            if (documentNumber != null) alternatives.add(cb.equal(cb.lower(root.get("documentNumber")), documentNumber.toLowerCase(java.util.Locale.ROOT)));
+            if (mobile != null) {
+                var candidates = new java.util.ArrayList<String>();
+                candidates.add(mobile);
+                if (mobile.length() == 9) candidates.add("51" + mobile);
+                if (mobile.startsWith("51") && mobile.length() == 11) candidates.add(mobile.substring(2));
+                alternatives.add(root.get("celular").in(candidates));
+            }
+            if (birthDate != null && paternalSurname != null) alternatives.add(cb.and(
+                    cb.equal(root.get("birthDate"), birthDate),
+                    cb.equal(cb.lower(root.get("paternalSurname")), paternalSurname.toLowerCase(java.util.Locale.ROOT))));
+            return cb.or(alternatives.toArray(jakarta.persistence.criteria.Predicate[]::new));
+        }, org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "updatedAt"));
+    }
 }

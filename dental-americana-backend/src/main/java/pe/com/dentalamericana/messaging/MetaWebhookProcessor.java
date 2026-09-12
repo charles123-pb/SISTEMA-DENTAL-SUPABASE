@@ -40,18 +40,20 @@ public class MetaWebhookProcessor {
     }
 
     public void process(byte[] payload) {
+        JsonNode root;
         try {
-            JsonNode root = mapper.readTree(payload);
-            if (!"whatsapp_business_account".equals(root.path("object").asText())) return;
-            for (JsonNode entry : root.path("entry")) {
-                for (JsonNode change : entry.path("changes")) {
-                    JsonNode value = change.path("value");
-                    processStatuses(value.path("statuses"));
-                    processMessages(value.path("messages"));
-                }
-            }
-        } catch (Exception exception) {
+            root = mapper.readTree(payload);
+        } catch (java.io.IOException exception) {
             throw new IllegalArgumentException("Payload de Meta WhatsApp inválido", exception);
+        }
+        if (root == null || !root.isObject()) throw new IllegalArgumentException("Payload de Meta WhatsApp inválido");
+        if (!"whatsapp_business_account".equals(root.path("object").asText())) return;
+        for (JsonNode entry : root.path("entry")) {
+            for (JsonNode change : entry.path("changes")) {
+                JsonNode value = change.path("value");
+                processStatuses(value.path("statuses"));
+                processMessages(value.path("messages"));
+            }
         }
     }
 

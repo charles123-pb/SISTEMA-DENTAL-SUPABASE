@@ -35,6 +35,24 @@ class JwtServiceTest {
 
     private AuthenticatedUser authenticatedUser() throws Exception { return authenticatedUser("doctor"); }
 
+    @Test
+    void passwordChangeInvalidatesExistingToken() throws Exception {
+        JwtService service = new JwtService(SECRET, 60);
+        AppUser entity = new AppUser("doctor", "hash-original", "Doctor de prueba");
+        String token = service.generateToken(AuthenticatedUser.from(entity));
+        entity.changePassword("hash-nuevo");
+        assertFalse(service.isValid(token, AuthenticatedUser.from(entity)));
+    }
+
+    @Test
+    void deactivationInvalidatesExistingToken() {
+        JwtService service = new JwtService(SECRET, 60);
+        AppUser entity = new AppUser("doctor", "hash", "Doctor de prueba");
+        String token = service.generateToken(AuthenticatedUser.from(entity));
+        entity.changeActive(false);
+        assertFalse(service.isValid(token, AuthenticatedUser.from(entity)));
+    }
+
     private AuthenticatedUser authenticatedUser(String username) throws Exception {
         Constructor<AuthenticatedUser> constructor = AuthenticatedUser.class.getDeclaredConstructor(
                 Long.class, String.class, String.class, String.class, boolean.class, boolean.class, Set.class);

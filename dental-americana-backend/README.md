@@ -35,7 +35,7 @@ El perfil `local` crea el administrador configurado solo cuando no existe. En pr
 
 ## Migraciones
 
-Flyway ejecuta automáticamente `V1` a `V11`. Hibernate usa `ddl-auto: validate`: el código no modifica el esquema por su cuenta. No edite una migración ya aplicada; cree una nueva versión.
+Flyway ejecuta las migraciones disponibles hasta `V17`; `V13` contiene datos de demostración y solo se carga con el perfil local. Hibernate usa `ddl-auto: validate`: el código no modifica el esquema por su cuenta. No edite una migración ya aplicada; cree una nueva versión.
 
 ## Integración WhatsApp
 
@@ -59,7 +59,7 @@ mvn test
 mvn clean package
 ```
 
-En esta entrega el frontend fue validado con 17 pruebas y compilación de producción. El backend fue validado con 9 pruebas automatizadas.
+Consulte `../ENTREGA_SISTEMA_DENTAL_AMERICANA.md` para el resultado de las verificaciones de la entrega. Las pruebas cubren seguridad, estados de cita, firma del webhook, autorización de mensajería y contratos HTTP del frontend. No sustituyen la prueba integral con PostgreSQL y una cuenta Meta real.
 
 ## Despliegue con contenedores
 

@@ -1,0 +1,41 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap');
+@import 'tailwindcss';
+
+:root { --primary:#2563eb; --primary-strong:#1769e0; --primary-soft:#eaf2ff; --ink:#172033; --muted:#6b7280; --canvas:#f5f7fb; --card:#fff; --border:#e7ecf3; --clinical:#123b41; --success:#20a970; --warning:#f59e0b; --danger:#e34c67; }
+* { box-sizing: border-box; }
+html { background: var(--canvas); }
+body { margin:0; min-width:320px; color:var(--ink); background:var(--canvas); font-family:'Inter',system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+button,input { font:inherit; } button { cursor:pointer; }
+h1,h2,h3,h4 { margin:0; font-family:'Manrope','Inter',sans-serif; }
+.focus-ring:focus-visible { outline:3px solid rgba(96,165,250,.65); outline-offset:3px; }
+
+@layer components {
+  .ui-button {
+    @apply flex items-center justify-center;
+    min-height: 39px;
+    gap: 6px;
+    padding: 0 12px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    font-size: .63rem;
+    font-weight: 850;
+  }
+  .ui-button:disabled { cursor: wait; opacity: .55; }
+  .ui-button > svg { width: 15px; }
+  .ui-button--primary { color: #fff; background: #176f82; }
+  .ui-button--secondary { color: #587286; border-color: #d4e0e7; background: #fff; }
+  .ui-button--icon { width: 39px; padding: 0; }
+  .ui-button--compact { font-size: .61rem; font-weight: 800; }
+
+  .ui-alert {
+    @apply flex items-center;
+    gap: 7px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: .65rem;
+  }
+  .ui-alert > svg { width: 16px; }
+  .ui-alert--error { color: #9c3b43; background: #fff0f2; }
+  .ui-alert--success { color: #1e6c53; background: #eaf8f1; }
+}

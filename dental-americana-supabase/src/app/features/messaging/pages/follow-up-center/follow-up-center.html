@@ -1,0 +1,360 @@
+<section class="whatsapp-page">
+  <header class="page-header">
+    <div>
+      <small>Comunicación con pacientes</small>
+      <h1>WhatsApp</h1>
+      <p>Conversaciones y citas en un solo lugar.</p>
+    </div>
+    <div class="header-actions">
+      <button
+        class="connection"
+        [attr.data-status]="session().status"
+        (click)="connectionDialog.set(true)"
+      >
+        @if (session().status === 'CONECTADO') {
+          <svg lucideWifi></svg>
+        } @else {
+          <svg lucideWifiOff></svg>
+        }
+        <span>{{ statusLabel(session().status) }}</span>
+      </button>
+      @if (canWrite()) {
+        <button class="primary" (click)="composeDialog.set(true)">
+          <svg lucidePlus></svg>Nuevo mensaje
+        </button>
+      }
+      @if (canWrite()) {
+        <button class="icon-button" title="Sincronizar chats" (click)="syncChats()" [disabled]="syncing()">
+          <svg lucideRefreshCw [class.animate-spin]="loading() || syncing()"></svg>
+        </button>
+      }
+    </div>
+  </header>
+
+  @if (error()) {
+    <div class="notice error">
+      <svg lucideAlertTriangle></svg>{{ error()
+      }}<button (click)="error.set('')"><svg lucideX></svg></button>
+    </div>
+  }
+  @if (success()) {
+    <div class="notice success"><svg lucideCheck></svg>{{ success() }}</div>
+  }
+
+  <nav class="view-tabs">
+    <button [class.active]="view() === 'chat'" (click)="view.set('chat')">
+      <svg lucideMessageCircle></svg>Conversaciones
+    </button>
+    <button [class.active]="view() === 'followups'" (click)="view.set('followups')">
+      <svg lucideClock3></svg>Seguimientos
+      @if (alerts().length) {
+        <b>{{ alerts().length }}</b>
+      }
+    </button>
+  </nav>
+
+  @if (view() === 'chat') {
+    <div class="messenger" [class.has-selection]="selected()">
+      <aside class="conversation-panel">
+        <form class="conversation-search" [formGroup]="searchForm">
+          <svg lucideSearch></svg
+          ><input
+            formControlName="query"
+            (input)="filterConversations()"
+            placeholder="Buscar paciente o mensaje"
+          />
+        </form>
+        <div class="conversation-list">
+          @if (loading()) {
+            <div class="loading"><svg lucideLoaderCircle class="animate-spin"></svg>Cargando...</div>
+          }
+          @for (conversation of conversations(); track conversation.id) {
+            <button
+              [class.active]="selected()?.id === conversation.id"
+              (click)="openConversation(conversation)"
+            >
+              <span class="avatar">{{ initials(conversation.patientName) }}</span>
+              <span class="conversation-copy"
+                ><strong>{{ conversation.patientName }}</strong>
+                <small>{{ conversation.lastMessage || 'Conversación nueva' }}</small></span
+              >
+              <span class="conversation-meta"
+                ><time>{{ conversation.lastMessageAt | date: 'HH:mm' }}</time>
+                @if (conversation.unreadCount) {
+                  <b>{{ conversation.unreadCount }}</b>
+                }
+              </span>
+            </button>
+          } @empty {
+            @if (!loading()) {
+              <div class="empty">
+                <svg lucideMessageCircle></svg>
+                <p>No hay conversaciones.</p>
+              </div>
+            }
+          }
+        </div>
+      </aside>
+
+      <main class="chat-panel">
+        @if (selected(); as conversation) {
+          <header class="chat-header">
+            <button class="mobile-back" (click)="selected.set(null)">‹</button>
+            <span class="avatar">{{ initials(conversation.patientName) }}</span>
+            <div>
+              <strong>{{ conversation.patientName }}</strong
+              ><small>+{{ conversation.phone }} · {{ statusLabel(conversation.status) }}</small>
+            </div>
+            <a class="icon-button" [href]="'tel:+' + conversation.phone" title="Llamar"
+              ><svg lucidePhone></svg
+            ></a>
+          </header>
+          <div class="messages" [class.loading]="loadingMessages()">
+            @if (loadingMessages()) {
+              <div class="loading"><svg lucideLoaderCircle class="animate-spin"></svg></div>
+            }
+            @for (message of messages(); track trackMessage($index, message)) {
+              <article
+                [class.outgoing]="message.direction === 'SALIENTE'"
+                [class.failed]="message.status === 'FALLIDO'"
+              >
+                <p>{{ message.content }}</p>
+                <footer>
+                  <time>{{ message.createdAt | date: 'dd/MM HH:mm' }}</time>
+                  @if (message.direction === 'SALIENTE') {
+                    @if (message.status === 'LEIDO') {
+                      <svg lucideCheckCheck class="read"></svg>
+                    } @else if (message.status === 'ENTREGADO') {
+                      <svg lucideCheckCheck></svg>
+                    } @else if (message.status === 'ENVIADO') {
+                      <svg lucideCheck></svg>
+                    } @else if (message.status === 'PENDIENTE' || message.status === 'EN_PROCESO') {
+                      <svg lucideClock3></svg>
+                    } @else if (message.status === 'FALLIDO') {
+                      <svg lucideAlertTriangle></svg>
+                    }
+                  }
+                </footer>
+                @if (message.status === 'FALLIDO') {
+                  <small class="failure">{{ message.errorDetail || 'No se pudo enviar' }}</small>
+                  @if (canWrite()) {
+                    <button class="retry" (click)="retry(message)" [disabled]="saving()">
+                      <svg lucideRotateCcw></svg>Reintentar
+                    </button>
+                  }
+                }
+              </article>
+            } @empty {
+              @if (!loadingMessages()) {
+                <div class="empty"><p>Empieza la conversación con este paciente.</p></div>
+              }
+            }
+          </div>
+          <form class="chat-composer" [formGroup]="messageForm" (ngSubmit)="send()">
+            <textarea
+              rows="1"
+              formControlName="content"
+              placeholder="Escribe un mensaje"
+              (keydown.enter)="handleEnter($event)"
+            ></textarea>
+            <button
+              class="send-button"
+              [disabled]="messageForm.invalid || saving() || !conversation.patientId"
+            >
+              <svg lucideSend></svg>
+            </button>
+          </form>
+        } @else {
+          <div class="chat-placeholder">
+            <span><svg lucideMessageCircle></svg></span>
+            <h2>Dental Americana</h2>
+            <p>Selecciona una conversación para comenzar.</p>
+          </div>
+        }
+      </main>
+
+      <aside class="details-panel">
+        @if (selected(); as conversation) {
+          <section class="patient-card">
+            <span class="large-avatar">{{ initials(conversation.patientName) }}</span>
+            <h2>{{ conversation.patientName }}</h2>
+            <p>{{ conversation.patientHistoryNumber || 'Paciente no identificado' }}</p>
+            <a [href]="'tel:+' + conversation.phone">+{{ conversation.phone }}</a>
+          </section>
+          @if (conversation.appointment; as appointment) {
+            <section>
+              <header><svg lucideCalendar></svg><strong>Próxima cita</strong></header>
+              <h3>{{ appointment.start | date: 'EEEE d MMMM, HH:mm' }}</h3>
+              <p>{{ appointment.reason }}</p>
+              <span class="appointment-status">{{ statusLabel(appointment.status) }}</span>
+            </section>
+          } @else {
+            <section class="no-appointment">
+              <svg lucideCalendar></svg>
+              <p>No tiene una cita próxima.</p>
+            </section>
+          }
+          <section class="quick-actions">
+            <h3>Acciones rápidas</h3>
+            <a routerLink="/sistema/agenda"><svg lucideCheck></svg>Confirmar cita</a>
+            <a routerLink="/sistema/agenda"><svg lucideCalendar></svg>Reprogramar</a>
+            <a routerLink="/sistema/agenda"><svg lucidePlus></svg>Crear cita</a>
+            @if (conversation.patientId) {
+              <a [routerLink]="['/sistema/pacientes', conversation.patientId]"
+                ><svg lucideUser></svg>Ver paciente</a
+              >
+            }
+            <a [href]="'tel:+' + conversation.phone"><svg lucidePhone></svg>Llamar</a>
+            <button
+              (click)="
+                messageForm.controls.content.setValue('Hola ' + conversation.patientName + ', ')
+              "
+            >
+              <svg lucideSend></svg>Enviar mensaje
+            </button>
+          </section>
+        }
+      </aside>
+    </div>
+  } @else {
+    <div class="followups-grid">
+      @for (followup of followups(); track followup.id) {
+        <article [class.alert]="followup.status === 'ALERTA'">
+          <header>
+            <span class="avatar">{{ initials(followup.patientName) }}</span>
+            <div>
+              <strong>{{ followup.patientName }}</strong
+              ><small>{{ followup.scheduledFor | date: 'dd/MM/yyyy HH:mm' }}</small>
+            </div>
+            <i>{{ statusLabel(followup.status) }}</i>
+          </header>
+          @if (followup.response) {
+            <blockquote>“{{ followup.response }}”</blockquote>
+          }
+          @if (followup.alertReason) {
+            <p class="failure">{{ followup.alertReason }}</p>
+          }
+          @if ((followup.status === 'ALERTA' || followup.status === 'RESPONDIDO') && canWrite()) {
+            <button (click)="review(followup)"><svg lucideCheck></svg>Marcar revisado</button>
+          }
+        </article>
+      } @empty {
+        <div class="empty"><p>No hay seguimientos.</p></div>
+      }
+    </div>
+  }
+</section>
+
+@if (connectionDialog()) {
+  <button class="scrim" (click)="connectionDialog.set(false)"></button>
+  <aside class="dialog connection-dialog">
+    <header>
+      <div>
+        <small>Evolution API</small>
+        <h2>Conexión de WhatsApp</h2>
+      </div>
+      <button (click)="connectionDialog.set(false)"><svg lucideX></svg></button>
+    </header>
+    <div class="connection-body">
+      <span class="status-badge" [attr.data-status]="session().status">{{
+        statusLabel(session().status)
+      }}</span>
+      @if (session().status === 'CONECTADO') {
+        <span class="connected-icon"><svg lucideWifi></svg></span>
+        <h3>WhatsApp está conectado</h3>
+        <p>
+          {{
+            session().phone
+              ? '+' + session().phone
+              : 'La sesión está lista para enviar y recibir mensajes.'
+          }}
+        </p>
+      } @else {
+        @if (session().qrCode) {
+          <img [src]="session().qrCode" alt="Código QR para conectar WhatsApp" />
+        }
+        @if (session().pairingCode) {
+          <p class="pairing">
+            Código: <strong>{{ session().pairingCode }}</strong>
+          </p>
+        }
+        <p>
+          En tu teléfono abre WhatsApp → Dispositivos vinculados → Vincular dispositivo y escanea el
+          QR.
+        </p>
+        @if (canWrite()) {
+          <button class="primary" (click)="connect()" [disabled]="saving()">
+            <svg lucideRefreshCw></svg
+            >{{ session().qrCode ? 'Generar otro QR' : 'Conectar y generar QR' }}
+          </button>
+        } @else {
+          <p>Tu usuario puede consultar los chats, pero no administrar la conexión.</p>
+        }
+      }
+      @if (session().detail && session().status === 'ERROR') {
+        <p class="failure">{{ session().detail }}</p>
+      }
+    </div>
+  </aside>
+}
+
+@if (composeDialog()) {
+  <button class="scrim" (click)="composeDialog.set(false)"></button>
+  <aside class="dialog compose-dialog">
+    <header>
+      <div>
+        <small>WhatsApp</small>
+        <h2>Nuevo mensaje</h2>
+      </div>
+      <button (click)="composeDialog.set(false)"><svg lucideX></svg></button>
+    </header>
+    <form [formGroup]="composeForm" (ngSubmit)="sendNew()">
+      <label
+        >Paciente
+        <div class="field">
+          <svg lucideSearch></svg
+          ><input
+            #patientSearch
+            formControlName="search"
+            (input)="searchPatients(patientSearch.value)"
+            placeholder="Nombre, DNI o celular"
+          /></div
+      ></label>
+      @if (results().length) {
+        <div class="patient-results">
+          @for (patient of results(); track patient.id) {
+            <button type="button" (click)="selectPatient(patient)">
+              <span class="avatar">{{ initials(patient.fullName) }}</span>
+              <div>
+                <strong>{{ patient.fullName }}</strong
+                ><small>{{ patient.mobile || 'Sin celular' }}</small>
+              </div>
+            </button>
+          }
+        </div>
+      }
+      @if (selectedPatient(); as patient) {
+        <div class="selected-patient">
+          <svg lucideCheck></svg>
+          <div>
+            <strong>{{ patient.fullName }}</strong
+            ><small>{{ patient.mobile }}</small>
+          </div>
+        </div>
+      }
+      <label
+        >Mensaje<textarea
+          rows="6"
+          formControlName="content"
+          placeholder="Escribe el mensaje"
+        ></textarea>
+      </label>
+      <button
+        class="primary"
+        [disabled]="!selectedPatient() || composeForm.controls.content.invalid || saving()"
+      >
+        <svg lucideSend></svg>Enviar ahora
+      </button>
+    </form>
+  </aside>
+}

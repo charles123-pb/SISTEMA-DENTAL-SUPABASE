@@ -9,6 +9,8 @@ import pe.com.dentalamericana.audit.AuditResult;
 import pe.com.dentalamericana.audit.AuditService;
 import pe.com.dentalamericana.common.BusinessConflictException;
 import pe.com.dentalamericana.common.ResourceNotFoundException;
+import pe.com.dentalamericana.clinical.ClinicalEncounterRepository;
+import pe.com.dentalamericana.clinical.ClinicalStatus;
 import pe.com.dentalamericana.patient.Patient;
 import pe.com.dentalamericana.messaging.MessageOutboxService;
 import pe.com.dentalamericana.patient.PatientService;
@@ -35,16 +37,19 @@ public class AppointmentService {
     private final AuditService audit;
     private final ZoneId clinicZone;
     private final MessageOutboxService outbox;
+    private final ClinicalEncounterRepository encounters;
 
     public AppointmentService(AppointmentRepository appointments, AppointmentTypeRepository types,
                               ProfessionalScheduleRepository schedules, ScheduleBlockRepository blocks,
                               AppointmentStatusHistoryRepository history, AppUserRepository users,
                               PatientService patients, AuditService audit,
-                              @Value("${app.clinic.zone-id}") String zoneId, MessageOutboxService outbox) {
+                              @Value("${app.clinic.zone-id}") String zoneId, MessageOutboxService outbox,
+                              ClinicalEncounterRepository encounters) {
         this.appointments = appointments; this.types = types; this.schedules = schedules; this.blocks = blocks;
         this.history = history; this.users = users; this.patients = patients; this.audit = audit;
         this.clinicZone = ZoneId.of(zoneId);
         this.outbox = outbox;
+        this.encounters = encounters;
     }
 
     @Transactional(readOnly = true)
@@ -118,6 +123,9 @@ public class AppointmentService {
                                       HttpServletRequest httpRequest) {
         Appointment appointment = find(id);
         if (appointment.getStatus().finalState()) throw new BusinessConflictException("No se puede reprogramar una cita finalizada");
+        if (encounters.findByAppointmentId(id).isPresent()) {
+            throw new BusinessConflictException("La cita ya tiene una atención clínica; programe una nueva cita para otro horario");
+        }
         requireVersion(appointment, request.version());
         if (!appointment.getPatientId().equals(request.patientId())) throw new BusinessConflictException("No se puede cambiar el paciente de una cita");
         AppointmentType type = findType(request.appointmentTypeId());
@@ -141,6 +149,14 @@ public class AppointmentService {
         requireVersion(appointment, request.version());
         AppointmentStatus previous = appointment.getStatus();
         if (previous == request.status()) return response(appointment);
+        if (request.status() == AppointmentStatus.COMPLETADA && encounters.findByAppointmentId(id)
+                .filter(encounter -> encounter.getStatus() == ClinicalStatus.FINALIZADA).isEmpty()) {
+            throw new BusinessConflictException("Finalice y apruebe la historia clínica para completar la cita");
+        }
+        if ((request.status() == AppointmentStatus.CANCELADA || request.status() == AppointmentStatus.NO_ASISTIO)
+                && encounters.findByAppointmentId(id).isPresent()) {
+            throw new BusinessConflictException("La cita tiene una atención clínica registrada; revise la historia antes de cambiarla");
+        }
         validateTransition(previous, request.status(), request.reason());
         String reason = trim(request.reason());
         appointment.changeStatus(request.status(), request.status() == AppointmentStatus.CANCELADA ? reason : null, actor.getId());
