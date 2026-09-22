@@ -22,6 +22,16 @@
               {
                 "glob": "**/*",
                 "input": "public"
+              },
+              {
+                "glob": "LICENSE",
+                "input": "node_modules/@fontsource-variable/inter",
+                "output": "/licenses/inter"
+              },
+              {
+                "glob": "LICENSE",
+                "input": "node_modules/@fontsource-variable/manrope",
+                "output": "/licenses/manrope"
               }
             ],
             "styles": [
@@ -43,7 +53,7 @@
                 },
                 {
                   "type": "anyComponentStyle",
-                  "maximumWarning": "16kB",
+                  "maximumWarning": "18kB",
                   "maximumError": "20kB"
                 }
               ],

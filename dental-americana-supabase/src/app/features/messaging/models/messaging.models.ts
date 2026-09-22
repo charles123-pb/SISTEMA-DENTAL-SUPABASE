@@ -1,5 +1,6 @@
 export type MessageType =
-  'ENTRANTE' | 'CITA_CONFIRMACION' | 'CITA_RECORDATORIO' | 'POSTCONSULTA' | 'MANUAL';
+  'ENTRANTE' | 'CITA_CONFIRMACION' | 'CITA_RECORDATORIO' | 'POSTCONSULTA' | 'MANUAL'
+  | 'CITA_CANCELACION' | 'CITA_REPROGRAMACION' | 'CITA_CONFIRMADA' | 'CITA_RECORDATORIO_2H';
 export type MessageStatus =
   | 'PENDIENTE'
   | 'EN_PROCESO'
@@ -10,6 +11,10 @@ export type MessageStatus =
   | 'FALLIDO'
   | 'CANCELADO';
 export type ConnectionStatus = 'CONECTADO' | 'DESCONECTADO' | 'CONECTANDO' | 'ERROR';
+export interface InboxPage<T> {
+  items: T[];
+  hasMore: boolean;
+}
 export interface Message {
   id: number;
   conversationId: number;

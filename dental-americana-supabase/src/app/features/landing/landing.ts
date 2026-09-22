@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import {
@@ -45,7 +45,24 @@ export class Landing {
   readonly sending = signal(false);
   readonly sent = signal(false);
   readonly error = signal('');
+  readonly requestId = signal<number | null>(null);
   readonly today = this.localDateKey(new Date());
+  readonly currentYear = new Date().getFullYear();
+  readonly whatsappFollowUpLink = computed(() => {
+    const id = this.requestId();
+    const message = id
+      ? `Hola, envié la solicitud de cita #${id} desde la página web. ¿Podrían ayudarme?`
+      : 'Hola, quisiera solicitar una cita en Dental Americana.';
+    return `https://wa.me/51940577075?text=${encodeURIComponent(message)}`;
+  });
+  readonly services = [
+    { title: 'Profilaxis y prevención', description: 'Limpieza profesional y orientación para cuidar tu salud bucal.', value: 'Profilaxis y prevención', category: 'Prevención' },
+    { title: 'Restauraciones', description: 'Evaluación de piezas dañadas para recuperar su función y apariencia.', value: 'Restauración', category: 'Restauración' },
+    { title: 'Endodoncia', description: 'Tratamiento indicado después de una evaluación para conservar la pieza.', value: 'Endodoncia', category: 'Conservación' },
+    { title: 'Prótesis y coronas', description: 'Opciones personalizadas para recuperar comodidad y función.', value: 'Prótesis o corona', category: 'Rehabilitación' },
+    { title: 'Blanqueamiento', description: 'Alternativas estéticas con evaluación y supervisión profesional.', value: 'Blanqueamiento', category: 'Estética' },
+    { title: 'Extracciones', description: 'Atención y orientación cuando una pieza requiere extracción.', value: 'Extracción', category: 'Cirugía' },
+  ] as const;
   readonly booking = this.fb.group({
     fullName: ['', [Validators.required, Validators.minLength(3), Validators.maxLength(150)]],
     documentNumber: ['', [Validators.maxLength(20), Validators.pattern(/^[a-zA-Z0-9-]*$/)]],
@@ -57,6 +74,12 @@ export class Landing {
     message: ['', Validators.maxLength(800)],
     privacyConsent: [false, Validators.requiredTrue],
   });
+
+  selectService(service: string): void {
+    this.sent.set(false);
+    this.requestId.set(null);
+    this.booking.controls.service.setValue(service);
+  }
 
   submit(): void {
     if (this.sending()) return;
@@ -80,7 +103,8 @@ export class Landing {
       message: value.message.trim() || null,
       privacyConsent: value.privacyConsent,
     }).pipe(finalize(() => this.sending.set(false))).subscribe({
-      next: () => {
+      next: (request) => {
+        this.requestId.set(request.id);
         this.sent.set(true);
         this.booking.reset({
           service: 'Evaluación general',

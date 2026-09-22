@@ -8,6 +8,8 @@ const directJid = (value: unknown) => {
   return jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid') ? jid : '';
 };
 const digits = (value: unknown) => String(value ?? '').split('@')[0].replace(/\D/g, '');
+const record = (value: unknown): Record<string, any> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 const timestamp = (value: unknown) => {
   const raw = typeof value === 'object' && value ? (value as { low?: unknown }).low : value;
   const seconds = Number(raw);
@@ -66,15 +68,16 @@ Deno.serve(async (request) => {
 
     let importedMessages = 0;
     const orderedMessages = messages
-      .filter((message) => directJid(message.key?.remoteJid) && text(message.message, message.messageType))
+      .filter((message) => directJid(record(message.key).remoteJid)
+        && text(record(message.message), String(message.messageType ?? '')))
       .sort((a, b) => Number(a.messageTimestamp ?? 0) - Number(b.messageTimestamp ?? 0));
     for (const message of orderedMessages) {
       const latestUpdate = Array.isArray(message.MessageUpdate) ? message.MessageUpdate.at(-1) : null;
       const result = await admin.rpc('importar_mensaje_whatsapp', { datos: {
-        providerChatId: directJid(message.key?.remoteJid),
-        providerId: message.key?.id,
-        direction: message.key?.fromMe ? 'SALIENTE' : 'ENTRANTE',
-        content: text(message.message, message.messageType),
+        providerChatId: directJid(record(message.key).remoteJid),
+        providerId: record(message.key).id,
+        direction: record(message.key).fromMe ? 'SALIENTE' : 'ENTRANTE',
+        content: text(record(message.message), String(message.messageType ?? '')),
         status: messageStatus(latestUpdate?.status ?? message.status),
         createdAt: timestamp(message.messageTimestamp),
       } });

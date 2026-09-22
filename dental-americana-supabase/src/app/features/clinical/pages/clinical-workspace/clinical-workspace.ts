@@ -29,6 +29,7 @@ import {
 } from '@lucide/angular';
 import { forkJoin } from 'rxjs';
 import { AuthService } from '../../../../core/auth/auth.service';
+import { canLeaveEditor, protectBeforeUnload } from '../../../../core/navigation/pending-changes.guard';
 import { SupabaseErrorService } from '../../../../core/supabase/supabase-error.service';
 import { AppointmentApiService } from '../../../appointments/data-access/appointment-api.service';
 import { Appointment } from '../../../appointments/models/appointment.models';
@@ -41,6 +42,7 @@ type ClinicalTab = 'anamnesis' | 'vitals' | 'exam' | 'assessment' | 'closure';
 
 @Component({
   selector: 'app-clinical-workspace',
+  host: { '(window:beforeunload)': 'beforeUnload($event)' },
   imports: [
     ReactiveFormsModule,
     RouterLink,
@@ -87,6 +89,9 @@ export class ClinicalWorkspace implements OnInit {
   readonly searching = signal(false);
   readonly canWrite = signal(this.auth.hasPermission('CLINICA_ESCRIBIR'));
   readonly canApprove = signal(this.auth.hasPermission('CLINICA_APROBAR'));
+  readonly canFinance = this.auth.hasPermission('FINANZA_LEER');
+  readonly canSchedule = this.auth.hasPermission('CITA_ESCRIBIR');
+  readonly canTreatment = this.auth.hasPermission('TRATAMIENTO_LEER');
   private searchTimer?: ReturnType<typeof setTimeout>;
   private workdayRequestId = 0;
   private searchRequestId = 0;
@@ -151,6 +156,14 @@ export class ClinicalWorkspace implements OnInit {
       this.patientRequestId++;
     });
     this.loadWorkday();
+    const encounterId = Number(this.route.snapshot.queryParamMap.get('encounterId'));
+    if (Number.isSafeInteger(encounterId) && encounterId > 0) {
+      this.clinicalApi.get(encounterId).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+        next: (encounter) => this.open(encounter),
+        error: (error: unknown) => this.error.set(this.errors.toUserMessage(error, 'No se pudo recuperar la atención.')),
+      });
+      return;
+    }
     const appointmentId = Number(this.route.snapshot.queryParamMap.get('appointmentId'));
     if (appointmentId > 0) {
       this.appointmentApi
@@ -198,6 +211,7 @@ export class ClinicalWorkspace implements OnInit {
   }
 
   openAppointment(item: Appointment): void {
+    if (this.current()?.appointmentId === item.id) return;
     const existing = this.encounters().find((encounter) => encounter.appointmentId === item.id);
     if (existing) {
       this.open(existing);
@@ -242,6 +256,11 @@ export class ClinicalWorkspace implements OnInit {
   }
 
   open(encounter: ClinicalEncounter): void {
+    if (this.current()?.id === encounter.id || !canLeaveEditor(this)) return;
+    this.displayEncounter(encounter);
+  }
+
+  private displayEncounter(encounter: ClinicalEncounter): void {
     const requestId = ++this.patientRequestId;
     this.current.set(encounter);
     this.tab.set('anamnesis');
@@ -266,6 +285,7 @@ export class ClinicalWorkspace implements OnInit {
   }
 
   close(): void {
+    if (!canLeaveEditor(this)) return;
     this.patientRequestId++;
     this.current.set(null);
     this.patient.set(null);
@@ -275,6 +295,12 @@ export class ClinicalWorkspace implements OnInit {
   setTab(tab: ClinicalTab): void {
     this.tab.set(tab);
   }
+
+  hasUnsavedChanges(): boolean {
+    return this.current()?.status === 'BORRADOR' && this.form.dirty;
+  }
+  isSavingChanges(): boolean { return this.saving(); }
+  beforeUnload(event: Event): void { protectBeforeUnload(event, this); }
 
   save(): void {
     const current = this.current();
@@ -339,6 +365,7 @@ export class ClinicalWorkspace implements OnInit {
 
   private start(patientId: number, appointmentId?: number): void {
     if (this.saving() || !this.canWrite()) return;
+    if (!canLeaveEditor(this)) return;
     this.saving.set(true);
     this.clearMessages();
     this.clinicalApi
@@ -351,7 +378,7 @@ export class ClinicalWorkspace implements OnInit {
             encounter,
             ...items.filter((item) => item.id !== encounter.id),
           ]);
-          this.open(encounter);
+          this.displayEncounter(encounter);
         },
         error: (error: unknown) => this.handleError(error, 'No se pudo iniciar la atención.'),
       });

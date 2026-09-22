@@ -10,14 +10,8 @@ services:
         condition: service_started
     ports:
       - "8080:8080"
-    # Usa el DNS de la red local para que los webhooks HTTPS de Supabase
-    # no dependan del resolver embebido de Docker.
-    dns:
-      - 192.168.137.1
     environment:
       NODE_OPTIONS: --dns-result-order=ipv4first
-    extra_hosts:
-      - "cnwnecyodyxoszvmfxuc.supabase.co:172.64.149.246"
     env_file:
       - .env
     volumes:

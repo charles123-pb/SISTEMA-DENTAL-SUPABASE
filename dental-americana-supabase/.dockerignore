@@ -3,3 +3,11 @@ dist
 .angular
 .git
 *.log
+**/.env
+**/.env.*
+**/secrets/**
+**/*.pem
+**/*.p12
+**/*.key
+coverage
+tmp

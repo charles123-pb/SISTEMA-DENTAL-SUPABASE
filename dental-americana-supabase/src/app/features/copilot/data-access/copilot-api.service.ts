@@ -45,8 +45,8 @@ export class CopilotApiService {
   private rpc<T>(name: string, args: Record<string, unknown>, fallback?: T): Observable<T> {
     const options =
       fallback === undefined
-        ? { errorMessage: 'No se pudo completar la operación de DENTALIA.' }
-        : { errorMessage: 'No se pudo completar la operación de DENTALIA.', fallback };
+        ? { errorMessage: 'No se pudo completar la operación de DentalIA.' }
+        : { errorMessage: 'No se pudo completar la operación de DentalIA.', fallback };
     return this.api.rpc<T>(name, args, options);
   }
 }

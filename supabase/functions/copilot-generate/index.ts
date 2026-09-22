@@ -34,6 +34,23 @@ type CopilotContext = {
   allergies: unknown;
   medications: unknown;
 };
+const externalEncounterFields = new Set([
+  "consultationReason", "illnessDuration", "signsSymptoms", "chronologicalStory",
+  "systolicPressure", "diastolicPressure", "pulse", "temperature",
+  "respiratoryRate", "weightKg", "heightCm", "generalExam", "dentalExam",
+  "diagnosis", "workPlan", "prognosis", "evolution", "instructions",
+  "dischargeObservation",
+]);
+function externalContext(context: CopilotContext) {
+  return {
+    encounter: Object.fromEntries(
+      Object.entries(context.encounter).filter(([key]) => externalEncounterFields.has(key)),
+    ),
+    histories: context.histories,
+    allergies: context.allergies,
+    medications: context.medications,
+  };
+}
 const configured = (value: string | undefined) =>
   Boolean(
     value && !/reemplazar|replace|example|your[_-]?key|cambiar/i.test(value),
@@ -57,7 +74,7 @@ const allowedTypes = new Set([
 
 async function geminiDraft(
   type: string,
-  context: CopilotContext,
+  context: ReturnType<typeof externalContext>,
   apiKey: string,
   model: string,
 ) {
@@ -134,10 +151,11 @@ Deno.serve(async (request) => {
     let content = localDraft(type, context, missing);
     const geminiKey = Deno.env.get("GEMINI_API_KEY");
     const geminiModel = Deno.env.get("GEMINI_MODEL") || "gemini-2.5-flash";
+    const externalAiEnabled = Deno.env.get("EXTERNAL_AI_ENABLED") === "true";
     let generatedFrom = "DATOS_ESTRUCTURADOS_EDGE";
-    if (configured(geminiKey)) {
+    if (externalAiEnabled && configured(geminiKey)) {
       try {
-        content = await geminiDraft(type, context, geminiKey!, geminiModel);
+        content = await geminiDraft(type, externalContext(context), geminiKey!, geminiModel);
       } catch (error) {
         if (error instanceof HttpError) throw error;
         throw new HttpError(
@@ -146,7 +164,7 @@ Deno.serve(async (request) => {
         );
       }
       generatedFrom = `GEMINI:${geminiModel}`;
-    } else {
+    } else if (externalAiEnabled) {
       const apiKey = Deno.env.get("AI_API_KEY");
       const apiUrl = Deno.env.get("AI_API_URL");
       const model = Deno.env.get("AI_MODEL");
@@ -164,7 +182,7 @@ Deno.serve(async (request) => {
               temperature: 0.2,
               messages: [
                 { role: "system", content: systemInstruction },
-                { role: "user", content: JSON.stringify({ type, context }) },
+                { role: "user", content: JSON.stringify({ type, context: externalContext(context) }) },
               ],
             }),
           });

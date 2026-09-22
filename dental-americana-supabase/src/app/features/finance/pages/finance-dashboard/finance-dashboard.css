@@ -576,3 +576,7 @@
     grid-template-columns: 1fr;
   }
 }
+.patient-context { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 16px 0; padding: 16px; border: 1px solid #cee0e7; border-radius: 12px; background: #eef8f9; color: #225e70; font-size: .8rem; }
+.patient-context > div { display: grid; gap: 5px; flex: 1; min-width: 200px; }
+.patient-context span { font-size: .72rem; color: #587583; }
+.patient-context a { color: #126e84; text-underline-offset: 3px; padding: 8px; }

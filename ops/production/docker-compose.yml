@@ -1,0 +1,112 @@
+name: dental-americana-prod
+
+services:
+  web:
+    build:
+      context: ../../dental-americana-supabase
+      dockerfile: Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:?Falta NODE_IMAGE con digest sha256}
+        NGINX_IMAGE: ${NGINX_IMAGE:?Falta NGINX_IMAGE con digest sha256}
+    restart: unless-stopped
+    environment:
+      SUPABASE_ORIGIN: ${SUPABASE_ORIGIN:?Falta SUPABASE_ORIGIN}
+      SUPABASE_WS_ORIGIN: ${SUPABASE_WS_ORIGIN:?Falta SUPABASE_WS_ORIGIN}
+      NGINX_ENVSUBST_FILTER: ^(SUPABASE_ORIGIN|SUPABASE_WS_ORIGIN)$
+    volumes:
+      - ./nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - edge
+
+  evolution-api:
+    image: ${EVOLUTION_IMAGE:?Falta EVOLUTION_IMAGE con digest sha256}
+    restart: unless-stopped
+    depends_on:
+      evolution-postgres:
+        condition: service_healthy
+      evolution-redis:
+        condition: service_started
+    environment:
+      SERVER_TYPE: http
+      SERVER_PORT: "8080"
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?Falta EVOLUTION_API_KEY}
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:${EVOLUTION_DB_PASSWORD:?Falta EVOLUTION_DB_PASSWORD}@evolution-postgres:5432/evolution
+      DATABASE_CONNECTION_CLIENT_NAME: dental_americana
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://evolution-redis:6379/6
+      CACHE_REDIS_PREFIX_KEY: evolution
+      CACHE_LOCAL_ENABLED: "false"
+      QRCODE_LIMIT: "30"
+      WEBHOOK_GLOBAL_ENABLED: "false"
+    volumes:
+      - evolution_instances:/evolution/instances
+    expose:
+      - "8080"
+    networks:
+      - edge
+      - data
+
+  evolution-postgres:
+    image: ${POSTGRES_IMAGE:?Falta POSTGRES_IMAGE con digest sha256}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: evolution
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: ${EVOLUTION_DB_PASSWORD:?Falta EVOLUTION_DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - evolution_postgres:/var/lib/postgresql/data
+    networks:
+      - data
+
+  evolution-redis:
+    image: ${REDIS_IMAGE:?Falta REDIS_IMAGE con digest sha256}
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - evolution_redis:/data
+    networks:
+      - data
+
+  cloudflared:
+    image: ${CLOUDFLARED_IMAGE:?Falta CLOUDFLARED_IMAGE con digest sha256}
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN_FILE: /run/secrets/cloudflare_tunnel_token
+    secrets:
+      - cloudflare_tunnel_token
+    depends_on:
+      web:
+        condition: service_healthy
+      evolution-api:
+        condition: service_started
+    networks:
+      - edge
+
+secrets:
+  cloudflare_tunnel_token:
+    file: ./secrets/cloudflare_tunnel_token
+
+volumes:
+  evolution_instances:
+  evolution_postgres:
+  evolution_redis:
+
+networks:
+  edge:
+  data:
+    internal: true

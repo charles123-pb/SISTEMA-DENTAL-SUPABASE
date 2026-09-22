@@ -54,6 +54,7 @@ export class PatientDetailPage implements OnInit {
   readonly selectedFile = signal<File | null>(null);
   readonly canWritePatient = signal(this.auth.hasPermission('PACIENTE_ESCRIBIR'));
   readonly canWriteClinical = signal(this.auth.hasPermission('CLINICA_ESCRIBIR'));
+  readonly canReadClinical = this.auth.hasPermission('CLINICA_LEER');
   readonly activeAllergies = computed(() => this.patient()?.allergies.filter((item) => item.status === 'ACTIVA') ?? []);
   readonly fullName = computed(() => {
     const p = this.patient();

@@ -1,80 +1,98 @@
 <section class="odontogram-page">
   @if (loading()) {
-    <div class="loading">
+    <div class="loading" role="status">
       <svg lucideLoaderCircle class="animate-spin"></svg>
       <h1>Cargando odontograma</h1>
     </div>
   } @else if (!encounter()) {
-    <div class="loading error">
+    <div class="loading error" role="alert">
       <svg lucideAlertTriangle></svg>
       <h1>{{ error() }}</h1>
-      <a routerLink="/sistema/atencion">Volver a atención</a>
+      <a routerLink="/sistema/atencion" [queryParams]="{ encounterId: encounter()?.id }">Volver a atención</a>
     </div>
   } @else {
     <header class="page-header">
       <a routerLink="/sistema/atencion" aria-label="Volver a atención"
         ><svg lucideArrowLeft></svg
       ></a>
-      <span class="patient-mark">{{ encounter()!.patientName.slice(0, 1) }}</span>
-      <div>
-        <small>{{ encounter()!.patientHistoryNumber }} · Atención {{ encounter()!.id }}</small>
-        <h1>Odontograma de {{ encounter()!.patientName }}</h1>
-        <p>{{ encounter()!.patientAge }} años · {{ encounter()!.dentistName }}</p>
+      <div class="patient-heading">
+        <small>HISTORIA CLÍNICA · {{ encounter()!.patientHistoryNumber }}</small>
+        <h1>
+          Odontograma <span>de {{ encounter()!.patientName }}</span>
+        </h1>
+        <p>
+          {{ encounter()!.patientAge }} años · {{ encounter()!.dentistName }} · Atención #{{
+            encounter()!.id
+          }}
+        </p>
       </div>
       <span class="status" [class.approved]="current()?.status === 'APROBADO'">
-        {{ current()?.status || 'SIN REGISTRO' }}
+        <i></i
+        >{{
+          saving()
+            ? 'Guardando…'
+            : current()?.status === 'APROBADO'
+              ? 'Aprobado'
+              : current()
+                ? 'Borrador clínico'
+                : 'Sin registro'
+        }}
       </span>
     </header>
 
     @if (error()) {
-      <div class="message error"><svg lucideAlertTriangle></svg>{{ error() }}</div>
+      <div class="message error" role="alert"><svg lucideAlertTriangle></svg>{{ error() }}</div>
     }
     @if (success()) {
-      <div class="message success"><svg lucideCheck></svg>{{ success() }}</div>
+      <div class="message success" role="status"><svg lucideCheck></svg>{{ success() }}</div>
     }
 
     <section class="summary-grid" aria-label="Resumen del odontograma">
-      <article class="summary-card summary-card--neutral">
+      <article>
         <span>{{ clinicalSummary().findings }}</span>
         <div><strong>Hallazgos</strong><small>registrados</small></div>
       </article>
-      <article class="summary-card summary-card--danger">
+      <article class="summary-danger">
         <span>{{ clinicalSummary().caries }}</span>
         <div><strong>Caries</strong><small>piezas afectadas</small></div>
       </article>
-      <article class="summary-card summary-card--warning">
+      <article class="summary-warning">
         <span>{{ clinicalSummary().indicated }}</span>
-        <div><strong>Indicados</strong><small>por atender</small></div>
+        <div><strong>Indicados</strong><small>piezas por atender</small></div>
       </article>
-      <article class="summary-card summary-card--success">
+      <article class="summary-success">
         <span>{{ clinicalSummary().completed }}</span>
-        <div><strong>Realizados</strong><small>completados</small></div>
+        <div><strong>Realizados</strong><small>piezas atendidas</small></div>
       </article>
-      <article class="summary-card summary-card--muted">
+      <article>
         <span>{{ clinicalSummary().absent }}</span>
-        <div><strong>Ausentes</strong><small>piezas dentales</small></div>
+        <div><strong>Ausentes</strong><small>piezas registradas</small></div>
       </article>
     </section>
 
     <div class="editor-layout">
       <main class="chart-panel">
         <header class="chart-header">
-          <div class="chart-title">
-            <span><svg lucideStethoscope></svg></span>
-            <div>
-              <h2>Registro visual por superficie</h2>
-              <p>Elige una condición y toca directamente la zona del diente.</p>
-            </div>
+          <div>
+            <span class="eyebrow">01 / EXPLORA</span>
+            <h2>Mapa dental</h2>
+            <p>Selecciona una pieza para verla ampliada.</p>
           </div>
-          <nav aria-label="Tipo de dentición">
+          <nav class="segmented" aria-label="Tipo de dentición">
             <button
+              type="button"
               [class.active]="dentition() === 'PERMANENTE'"
+              [attr.aria-pressed]="dentition() === 'PERMANENTE'"
+              [disabled]="saving()"
               (click)="switchDentition('PERMANENTE')"
             >
-              <svg lucideShieldCheck></svg>Permanente
+              <svg lucideShieldCheck></svg>Adulto
             </button>
             <button
+              type="button"
               [class.active]="dentition() === 'INFANTIL'"
+              [attr.aria-pressed]="dentition() === 'INFANTIL'"
+              [disabled]="saving()"
               (click)="switchDentition('INFANTIL')"
             >
               <svg lucideBaby></svg>Infantil
@@ -82,392 +100,415 @@
           </nav>
         </header>
 
-        @if (current() && current()!.status === 'BORRADOR' && canWrite()) {
-          <section class="marking-toolbar">
+        @if (current()) {
+          <nav class="quadrant-filter" aria-label="Mostrar cuadrante">
+            @for (option of quadrantOptions; track option.value) {
+              <button
+                type="button"
+                [class.active]="focusedQuadrant() === option.value"
+                [attr.aria-pressed]="focusedQuadrant() === option.value"
+                [disabled]="saving()"
+                (click)="focusQuadrant(option.value)"
+              >
+                {{ option.label }}
+              </button>
+            }
+          </nav>
+          <div class="chart-guide">
+            <span>Vista frontal · Numeración FDI</span
+            ><small>Los lados corresponden al paciente</small>
+          </div>
+          <div
+            class="chart-scroll"
+            tabindex="0"
+            role="region"
+            aria-label="Mapa de piezas. Desplaza horizontalmente para ver ambas mitades."
+            [class.focused]="focusedQuadrant() !== 0"
+          >
+            <div class="chart-canvas" [class.primary]="dentition() === 'INFANTIL'">
+              <div class="orientation">
+                @if (focusedQuadrant() === 0) {
+                  <span>Derecha del paciente</span><span>Izquierda del paciente</span>
+                } @else {
+                  <span
+                    >Lado
+                    {{
+                      focusedQuadrant() === 1 || focusedQuadrant() === 4 ? 'derecho' : 'izquierdo'
+                    }}
+                    del paciente</span
+                  ><span
+                    >Cuadrante {{ focusedQuadrant() + (dentition() === 'INFANTIL' ? 4 : 0) }}</span
+                  >
+                }
+              </div>
+              @for (arch of visibleArches(); track arch.label) {
+                <section class="arch" [attr.aria-label]="arch.label">
+                  <h3>{{ arch.label }}</h3>
+                  <div class="teeth" [style.--tooth-count]="arch.teeth.length">
+                    @for (tooth of arch.teeth; track tooth) {
+                      <article class="tooth-card" [class.selected]="selectedTooth() === tooth">
+                        <button
+                          type="button"
+                          class="tooth-number"
+                          [title]="toothDescription(tooth)"
+                          [attr.aria-label]="toothDescription(tooth)"
+                          [attr.aria-pressed]="selectedTooth() === tooth"
+                          [disabled]="saving()"
+                          (click)="selectTooth(tooth)"
+                        >
+                          {{ tooth }}
+                        </button>
+                        <app-tooth-surface-map
+                          [tooth]="tooth"
+                          [findings]="findingsFor(tooth)"
+                          [selectedSurface]="
+                            selectedTooth() === tooth ? form.controls.surface.value : null
+                          "
+                          [disabled]="saving()"
+                          (surfaceSelected)="markSurface(tooth, $event)"
+                        />
+                        <span
+                          class="finding-count"
+                          [class.has-findings]="findingsFor(tooth).length"
+                          [attr.aria-label]="findingsFor(tooth).length + ' hallazgos'"
+                          >{{ findingsFor(tooth).length || '—' }}</span
+                        >
+                      </article>
+                    }
+                  </div>
+                </section>
+              }
+            </div>
+          </div>
+          <p class="chart-hint">
+            <svg lucideMousePointerClick></svg>Toca el número para revisar. Usa los cuadrantes para
+            acercar una zona.
+            <button type="button" (click)="showDetail(detailPanel)">Ir al detalle de la pieza {{ selectedTooth() }}</button>
+          </p>
+        } @else {
+          <div class="empty-chart" role="status">
+            <svg lucideStethoscope></svg>
+            <h3>{{ saving() ? 'Preparando odontograma…' : 'Sin registro para esta dentición' }}</h3>
+            <p>
+              {{ dentition() === 'INFANTIL' ? 'Infantil: piezas temporales (51 a 85).' : 'Adulto: piezas permanentes (11 a 48).' }}
+              Los hallazgos se mantienen separados.
+            </p>
+            @if (canWrite() && encounter()!.status === 'BORRADOR') {
+              <button type="button" class="create-dentition" [disabled]="saving()" (click)="createDentition()">
+                <svg lucidePlus></svg>Crear odontograma {{ dentition() === 'INFANTIL' ? 'infantil' : 'adulto' }}
+              </button>
+              <small>Solo crea el tipo de dentición que evaluarás; no es necesario crear ambos.</small>
+            }
+          </div>
+        }
+
+        @if (editable()) {
+          <section class="marking-toolbar" aria-label="Herramientas de registro">
             <header>
               <div>
-                <svg lucidePalette></svg>
-                <div>
-                  <strong>Paleta clínica</strong><small>Condición que deseas registrar</small>
-                </div>
+                <span class="eyebrow">02 / ELIGE UNA CONDICIÓN</span>
+                <h2><svg lucidePalette></svg>Paleta de hallazgos</h2>
               </div>
               <button
                 type="button"
                 class="quick-toggle"
                 [class.active]="quickMark()"
                 [attr.aria-pressed]="quickMark()"
+                [disabled]="saving()"
                 (click)="quickMark.set(!quickMark())"
               >
-                <svg lucideMousePointerClick></svg>
-                {{ quickMark() ? 'Marcado rápido activo' : 'Solo seleccionar' }}
+                <svg lucideMousePointerClick></svg
+                >{{ quickMark() ? 'Marcado directo' : 'Seleccionar y revisar' }}
               </button>
             </header>
-            <div class="condition-palette">
+            <p class="mode-hint" [class.direct]="quickMark()">
+              {{
+                quickMark()
+                  ? 'Marcado directo activo: cada clic en una superficie guarda un hallazgo con la condición y el estado elegidos.'
+                  : 'Selecciona una superficie y revisa el detalle antes de pulsar «Registrar hallazgo».'
+              }}
+            </p>
+            <div class="condition-palette" aria-label="Condición activa">
               @for (option of conditionOptions; track option.value) {
                 <button
                   type="button"
                   [class.active]="form.controls.condition.value === option.value"
+                  [attr.aria-pressed]="form.controls.condition.value === option.value"
                   [style.--condition-color]="option.color"
+                  [disabled]="saving()"
                   (click)="chooseCondition(option.value)"
                 >
                   <i></i>{{ option.label }}
+                  @if (form.controls.condition.value === option.value) {
+                    <svg lucideCheck></svg>
+                  }
                 </button>
               }
             </div>
-            <div class="treatment-switch" aria-label="Estado del tratamiento">
-              <span>Estado:</span>
-              <button
-                type="button"
-                [class.active]="form.controls.treatmentState.value === 'INDICADO'"
-                (click)="form.controls.treatmentState.setValue('INDICADO')"
-              >
-                Indicado
-              </button>
-              <button
-                type="button"
-                [class.active]="form.controls.treatmentState.value === 'EXISTENTE'"
-                (click)="form.controls.treatmentState.setValue('EXISTENTE')"
-              >
-                Existente
-              </button>
-              <button
-                type="button"
-                [class.active]="form.controls.treatmentState.value === 'REALIZADO'"
-                (click)="form.controls.treatmentState.setValue('REALIZADO')"
-              >
-                Realizado
-              </button>
+            <div class="treatment-switch" aria-label="Estado del hallazgo">
+              <span>Estado</span>
+              @for (state of ['INDICADO', 'EXISTENTE', 'REALIZADO']; track state) {
+                <button
+                  type="button"
+                  [class.active]="form.controls.treatmentState.value === state"
+                  [attr.aria-pressed]="form.controls.treatmentState.value === state"
+                  [disabled]="saving()"
+                  (click)="chooseTreatmentState(state)"
+                >
+                  {{ label(state) }}
+                </button>
+              }
             </div>
           </section>
+        } @else if (current()) {
+          <div class="read-only-note">
+            <svg lucideShieldCheck></svg>Modo consulta. Puedes explorar las piezas sin modificar el
+            registro.
+          </div>
         }
 
-        <div class="legend">
-          <span><i class="healthy"></i>Sin hallazgo</span>
-          <span><i class="caries"></i>Caries / patología</span>
-          <span><i class="restoration"></i>Restauración</span>
-          <span><i class="treatment"></i>Tratamiento especial</span>
-          <span><i class="absent"></i>Ausente</span>
-        </div>
-
-        <section class="numbering-guide">
-          <strong>Vista frontal · Numeración FDI</strong>
+        <details class="color-guide">
+          <summary>Guía de colores y superficies</summary>
           <p>
-            Derecha del paciente a tu izquierda. Cada pieza tiene cinco zonas: vestibular,
-            lingual/palatina, mesial, distal y oclusal/incisal.
+            El color identifica la condición; el estado se muestra por separado en cada hallazgo. Si
+            coinciden varios registros, revisa la lista de la pieza.
           </p>
-        </section>
-
-        @if (!current()) {
-          <div class="empty-chart">
-            <svg lucideAlertTriangle></svg>
-            <h3>No existe odontograma para esta dentición</h3>
+          <div class="color-legend">
+            @for (option of conditionOptions; track option.value) {
+              <span><i [style.background]="option.color"></i>{{ option.label }}</span>
+            }
           </div>
-        } @else {
-          <div class="orientation">
-            <span>Derecha del paciente</span><i>Línea media</i><span>Izquierda del paciente</span>
-          </div>
-          <div class="arch">
-            <div class="arch-label">Arcada superior</div>
-            <div class="teeth" [class.primary]="dentition() === 'INFANTIL'">
-              @for (tooth of upper(); track tooth) {
-                <article class="tooth-card" [class.selected]="selectedTooth() === tooth">
-                  <button
-                    type="button"
-                    class="tooth-number"
-                    [title]="toothDescription(tooth)"
-                    [attr.aria-label]="toothDescription(tooth)"
-                    (click)="selectTooth(tooth)"
-                  >
-                    {{ tooth }}
-                  </button>
-                  <div class="surface-map" [class.absent]="isAbsent(tooth)">
-                    <button
-                      type="button"
-                      class="surface surface--top"
-                      [class.has-finding]="hasSurfaceFinding(tooth, verticalSurface(tooth, 'top'))"
-                      [class.active]="
-                        selectedTooth() === tooth &&
-                        form.controls.surface.value === verticalSurface(tooth, 'top')
-                      "
-                      [style.--surface-color]="surfaceColor(tooth, verticalSurface(tooth, 'top'))"
-                      [title]="surfaceLabel(tooth, verticalSurface(tooth, 'top'))"
-                      (click)="markSurface(tooth, verticalSurface(tooth, 'top'))"
-                    ></button>
-                    <button
-                      type="button"
-                      class="surface surface--left"
-                      [class.has-finding]="hasSurfaceFinding(tooth, lateralSurface(tooth, 'left'))"
-                      [class.active]="
-                        selectedTooth() === tooth &&
-                        form.controls.surface.value === lateralSurface(tooth, 'left')
-                      "
-                      [style.--surface-color]="surfaceColor(tooth, lateralSurface(tooth, 'left'))"
-                      [title]="surfaceLabel(tooth, lateralSurface(tooth, 'left'))"
-                      (click)="markSurface(tooth, lateralSurface(tooth, 'left'))"
-                    ></button>
-                    <button
-                      type="button"
-                      class="surface surface--center"
-                      [class.has-finding]="hasSurfaceFinding(tooth, centerSurfaceFor(tooth))"
-                      [class.active]="
-                        selectedTooth() === tooth &&
-                        form.controls.surface.value === centerSurfaceFor(tooth)
-                      "
-                      [style.--surface-color]="surfaceColor(tooth, centerSurfaceFor(tooth))"
-                      [title]="surfaceLabel(tooth, centerSurfaceFor(tooth))"
-                      (click)="markSurface(tooth, centerSurfaceFor(tooth))"
-                    ></button>
-                    <button
-                      type="button"
-                      class="surface surface--right"
-                      [class.has-finding]="hasSurfaceFinding(tooth, lateralSurface(tooth, 'right'))"
-                      [class.active]="
-                        selectedTooth() === tooth &&
-                        form.controls.surface.value === lateralSurface(tooth, 'right')
-                      "
-                      [style.--surface-color]="surfaceColor(tooth, lateralSurface(tooth, 'right'))"
-                      [title]="surfaceLabel(tooth, lateralSurface(tooth, 'right'))"
-                      (click)="markSurface(tooth, lateralSurface(tooth, 'right'))"
-                    ></button>
-                    <button
-                      type="button"
-                      class="surface surface--bottom"
-                      [class.has-finding]="
-                        hasSurfaceFinding(tooth, verticalSurface(tooth, 'bottom'))
-                      "
-                      [class.active]="
-                        selectedTooth() === tooth &&
-                        form.controls.surface.value === verticalSurface(tooth, 'bottom')
-                      "
-                      [style.--surface-color]="
-                        surfaceColor(tooth, verticalSurface(tooth, 'bottom'))
-                      "
-                      [title]="surfaceLabel(tooth, verticalSurface(tooth, 'bottom'))"
-                      (click)="markSurface(tooth, verticalSurface(tooth, 'bottom'))"
-                    ></button>
-                  </div>
-                  @if (findingsFor(tooth).length) {
-                    <small class="finding-count">{{ findingsFor(tooth).length }}</small>
-                  }
-                </article>
-              }
-            </div>
+          <p>
+            V: vestibular · M: mesial · D: distal · P/L: palatina o lingual · O/I: oclusal o
+            incisal. Una pieza sin marcas indica «sin hallazgos registrados», no un diagnóstico.
+          </p>
+        </details>
 
-            <div class="midline"><span>Línea media</span></div>
-
-            <div class="teeth lower" [class.primary]="dentition() === 'INFANTIL'">
-              @for (tooth of lower(); track tooth) {
-                <article class="tooth-card" [class.selected]="selectedTooth() === tooth">
-                  <div class="surface-map" [class.absent]="isAbsent(tooth)">
-                    <button
-                      type="button"
-                      class="surface surface--top"
-                      [class.has-finding]="hasSurfaceFinding(tooth, verticalSurface(tooth, 'top'))"
-                      [class.active]="
-                        selectedTooth() === tooth &&
-                        form.controls.surface.value === verticalSurface(tooth, 'top')
-                      "
-                      [style.--surface-color]="surfaceColor(tooth, verticalSurface(tooth, 'top'))"
-                      [title]="surfaceLabel(tooth, verticalSurface(tooth, 'top'))"
-                      (click)="markSurface(tooth, verticalSurface(tooth, 'top'))"
-                    ></button>
-                    <button
-                      type="button"
-                      class="surface surface--left"
-                      [class.has-finding]="hasSurfaceFinding(tooth, lateralSurface(tooth, 'left'))"
-                      [class.active]="
-                        selectedTooth() === tooth &&
-                        form.controls.surface.value === lateralSurface(tooth, 'left')
-                      "
-                      [style.--surface-color]="surfaceColor(tooth, lateralSurface(tooth, 'left'))"
-                      [title]="surfaceLabel(tooth, lateralSurface(tooth, 'left'))"
-                      (click)="markSurface(tooth, lateralSurface(tooth, 'left'))"
-                    ></button>
-                    <button
-                      type="button"
-                      class="surface surface--center"
-                      [class.has-finding]="hasSurfaceFinding(tooth, centerSurfaceFor(tooth))"
-                      [class.active]="
-                        selectedTooth() === tooth &&
-                        form.controls.surface.value === centerSurfaceFor(tooth)
-                      "
-                      [style.--surface-color]="surfaceColor(tooth, centerSurfaceFor(tooth))"
-                      [title]="surfaceLabel(tooth, centerSurfaceFor(tooth))"
-                      (click)="markSurface(tooth, centerSurfaceFor(tooth))"
-                    ></button>
-                    <button
-                      type="button"
-                      class="surface surface--right"
-                      [class.has-finding]="hasSurfaceFinding(tooth, lateralSurface(tooth, 'right'))"
-                      [class.active]="
-                        selectedTooth() === tooth &&
-                        form.controls.surface.value === lateralSurface(tooth, 'right')
-                      "
-                      [style.--surface-color]="surfaceColor(tooth, lateralSurface(tooth, 'right'))"
-                      [title]="surfaceLabel(tooth, lateralSurface(tooth, 'right'))"
-                      (click)="markSurface(tooth, lateralSurface(tooth, 'right'))"
-                    ></button>
-                    <button
-                      type="button"
-                      class="surface surface--bottom"
-                      [class.has-finding]="
-                        hasSurfaceFinding(tooth, verticalSurface(tooth, 'bottom'))
-                      "
-                      [class.active]="
-                        selectedTooth() === tooth &&
-                        form.controls.surface.value === verticalSurface(tooth, 'bottom')
-                      "
-                      [style.--surface-color]="
-                        surfaceColor(tooth, verticalSurface(tooth, 'bottom'))
-                      "
-                      [title]="surfaceLabel(tooth, verticalSurface(tooth, 'bottom'))"
-                      (click)="markSurface(tooth, verticalSurface(tooth, 'bottom'))"
-                    ></button>
-                  </div>
-                  <button
-                    type="button"
-                    class="tooth-number"
-                    [title]="toothDescription(tooth)"
-                    [attr.aria-label]="toothDescription(tooth)"
-                    (click)="selectTooth(tooth)"
-                  >
-                    {{ tooth }}
-                  </button>
-                  @if (findingsFor(tooth).length) {
-                    <small class="finding-count">{{ findingsFor(tooth).length }}</small>
-                  }
-                </article>
-              }
-            </div>
-            <div class="arch-label">Arcada inferior</div>
-          </div>
-
+        @if (current()) {
           <section class="general-note">
             <header>
-              <div><svg lucideHistory></svg><strong>Observación general</strong></div>
-              @if (current()!.status === 'BORRADOR' && canWrite()) {
-                <button [disabled]="saving()" (click)="saveObservation()">
-                  <svg lucideSave></svg>Guardar
-                </button>
+              <div>
+                <svg lucideHistory></svg>
+                <h2>Observación general</h2>
+              </div>
+              @if (hasPendingObservation()) {
+                <span class="pending-badge">Sin guardar</span>
               }
             </header>
+            <label class="sr-only" for="odontogram-note">Observación general del odontograma</label>
             <textarea
+              id="odontogram-note"
               [formControl]="observation"
               rows="3"
-              [readonly]="current()!.status === 'APROBADO'"
-              placeholder="Observaciones generales del odontograma"
+              maxlength="4000"
+              [readonly]="!editable() || saving()"
+              [attr.aria-invalid]="observation.invalid"
+              aria-describedby="note-help"
+              placeholder="Información relevante para la revisión del odontograma"
             ></textarea>
+            <div class="note-footer">
+              <small id="note-help">{{
+                observation.invalid
+                  ? 'La observación admite hasta 4000 caracteres.'
+                  : observation.value.length + ' / 4000 caracteres'
+              }}</small>
+              @if (editable()) {
+                <div>
+                  @if (hasPendingObservation()) {
+                    <button
+                      type="button"
+                      class="text-button"
+                      [disabled]="saving()"
+                      (click)="discardObservation()"
+                    >
+                      Descartar cambios
+                    </button>
+                  }
+                  <button
+                    type="button"
+                    class="secondary-button"
+                    [disabled]="saving() || observation.invalid || !hasPendingObservation()"
+                    (click)="saveObservation()"
+                  >
+                    <svg lucideSave></svg>Guardar nota
+                  </button>
+                </div>
+              }
+            </div>
           </section>
         }
       </main>
 
-      <aside class="detail-panel">
+      <aside #detailPanel tabindex="-1" class="detail-panel" aria-label="Detalle de la pieza seleccionada">
         <header>
           <span class="selected-number">{{ selectedTooth() }}</span>
           <div>
-            <small>Pieza seleccionada</small>
+            <span class="eyebrow">PIEZA SELECCIONADA</span>
             <h2>Detalle clínico</h2>
-            <p>{{ toothDescription(selectedTooth()) }}</p>
+          </div>
+          <div class="tooth-navigation">
+            <button
+              type="button"
+              aria-label="Pieza anterior"
+              [disabled]="saving()"
+              (click)="moveTooth(-1)"
+            >
+              <svg lucideChevronLeft></svg></button
+            ><button
+              type="button"
+              aria-label="Pieza siguiente"
+              [disabled]="saving()"
+              (click)="moveTooth(1)"
+            >
+              <svg lucideChevronRight></svg>
+            </button>
           </div>
         </header>
+        <p class="tooth-description">{{ toothDescription(selectedTooth()) }}</p>
 
         @if (current()) {
+          <div class="tooth-zoom">
+            <span>Vista ampliada</span>
+            <app-tooth-surface-map
+              [tooth]="selectedTooth()"
+              [findings]="selectedFindings()"
+              [selectedSurface]="form.controls.surface.value"
+              [disabled]="saving()"
+              (surfaceSelected)="markSurface(selectedTooth(), $event)"
+            />
+            <button
+              type="button"
+              class="whole-tooth"
+              [class.active]="form.controls.surface.value === 'GENERAL'"
+              [attr.aria-pressed]="form.controls.surface.value === 'GENERAL'"
+              [disabled]="saving()"
+              (click)="chooseSurface('GENERAL')"
+            >
+              Pieza completa
+            </button>
+          </div>
           <div class="selected-surface">
-            <span>Superficie activa</span>
-            <strong>{{ label(form.controls.surface.value) }}</strong>
+            <span>Superficie seleccionada</span
+            ><strong>{{ label(form.controls.surface.value) }}</strong>
           </div>
 
-          <div class="finding-list">
-            @for (finding of selectedFindings(); track finding.id) {
-              <article
-                [attr.data-state]="finding.treatmentState"
-                [style.--finding-color]="conditionColor(finding.condition)"
-              >
-                <span></span>
-                <div>
-                  <strong>{{ label(finding.condition) }}</strong>
-                  <p>{{ label(finding.surface) }} · {{ label(finding.treatmentState) }}</p>
-                  @if (finding.observation) {
-                    <small>{{ finding.observation }}</small>
-                  }
-                </div>
-                @if (current()!.status === 'BORRADOR' && canWrite()) {
-                  <button (click)="remove(finding)" title="Retirar hallazgo">
-                    <svg lucideTrash2></svg>
-                  </button>
-                }
-              </article>
-            } @empty {
-              <div class="no-findings">
-                <svg lucideShieldCheck></svg>
-                <p>Sin hallazgos registrados en esta pieza.</p>
-              </div>
-            }
-          </div>
-
-          @if (current()!.status === 'BORRADOR' && canWrite()) {
+          @if (editable()) {
             <form [formGroup]="form" (ngSubmit)="add()">
-              <div class="form-heading">
-                <div>
-                  <h3>Completar registro</h3>
-                  <small>Puedes ajustar los datos antes de guardar.</small>
+              <fieldset class="editor-fields" [disabled]="saving()">
+                <div class="form-heading">
+                  <span class="eyebrow">03 / REGISTRA</span>
+                  <h3>Nuevo hallazgo</h3>
                 </div>
-                <i [style.background]="conditionColor(form.controls.condition.value)"></i>
-              </div>
-
-              <label>
-                Superficie
-                <select formControlName="surface">
-                  <option value="GENERAL">General / pieza completa</option>
-                  <option value="OCLUSAL">Oclusal</option>
-                  <option value="INCISAL">Incisal</option>
-                  <option value="MESIAL">Mesial</option>
-                  <option value="DISTAL">Distal</option>
-                  <option value="VESTIBULAR">Vestibular</option>
-                  <option value="LINGUAL_PALATINA">Lingual / palatina</option>
-                </select>
-              </label>
-              <label>
-                Condición
-                <select formControlName="condition">
-                  @for (option of conditionOptions; track option.value) {
-                    <option [value]="option.value">{{ option.label }}</option>
+                <div class="form-pair">
+                  <label
+                    >Condición<select formControlName="condition">
+                      @for (option of conditionOptions; track option.value) {
+                        <option [value]="option.value">{{ option.label }}</option>
+                      }
+                    </select></label
+                  >
+                  <label
+                    >Estado<select formControlName="treatmentState">
+                      <option value="EXISTENTE">Existente</option>
+                      <option value="INDICADO">Indicado</option>
+                      <option value="REALIZADO">Realizado</option>
+                    </select></label
+                  >
+                </div>
+                <label
+                  >Superficie<select formControlName="surface">
+                    <option value="GENERAL">General / pieza completa</option>
+                    <option value="OCLUSAL">Oclusal</option>
+                    <option value="INCISAL">Incisal</option>
+                    <option value="MESIAL">Mesial</option>
+                    <option value="DISTAL">Distal</option>
+                    <option value="VESTIBULAR">Vestibular</option>
+                    <option value="LINGUAL_PALATINA">Lingual / palatina</option>
+                  </select></label
+                >
+                <label
+                  >Observación <span class="optional">opcional</span
+                  ><textarea
+                    formControlName="observation"
+                    rows="2"
+                    maxlength="500"
+                    [attr.aria-invalid]="form.controls.observation.invalid"
+                    aria-describedby="finding-note-help"
+                    placeholder="Detalle de este hallazgo"
+                  ></textarea>
+                </label>
+                <small id="finding-note-help" class="field-hint">{{
+                  form.controls.observation.invalid
+                    ? 'El detalle admite hasta 500 caracteres.'
+                    : form.controls.observation.value.length + ' / 500 caracteres'
+                }}</small>
+                <button type="submit" class="add" [disabled]="saving() || form.invalid">
+                  @if (saving()) {
+                    <svg lucideLoaderCircle class="animate-spin"></svg>Guardando…
+                  } @else {
+                    <svg lucidePlus></svg>Registrar hallazgo en {{ selectedTooth() }}
                   }
-                </select>
-              </label>
-              <label>
-                Estado
-                <select formControlName="treatmentState">
-                  <option value="EXISTENTE">Existente</option>
-                  <option value="INDICADO">Indicado</option>
-                  <option value="REALIZADO">Realizado</option>
-                </select>
-              </label>
-              <label>
-                Observación
-                <textarea
-                  formControlName="observation"
-                  rows="3"
-                  placeholder="Detalle clínico opcional"
-                ></textarea>
-              </label>
-              <button class="add" [disabled]="saving()">
-                @if (saving()) {
-                  <svg lucideLoaderCircle class="animate-spin"></svg>
-                } @else {
-                  <svg lucidePlus></svg>
-                }
-                Confirmar y registrar
-              </button>
+                </button>
+                <p class="save-hint">Se guarda en la historia clínica al registrar.</p>
+              </fieldset>
             </form>
           }
+
+          <section class="findings-section">
+            <h3>
+              Hallazgos de la pieza <span>{{ selectedFindings().length }}</span>
+            </h3>
+            <div class="finding-list">
+              @for (finding of selectedFindings(); track finding.id) {
+                <article [style.--finding-color]="conditionColor(finding.condition)">
+                  <i></i>
+                  <div>
+                    <strong>{{ label(finding.condition) }}</strong>
+                    <p>{{ label(finding.surface) }}</p>
+                    <span class="finding-state" [attr.data-state]="finding.treatmentState">{{
+                      label(finding.treatmentState)
+                    }}</span>
+                    @if (finding.observation) {
+                      <small>{{ finding.observation }}</small>
+                    }
+                  </div>
+                  @if (editable()) {
+                    <button
+                      type="button"
+                      [disabled]="saving()"
+                      (click)="remove(finding)"
+                      [attr.aria-label]="
+                        'Retirar ' + label(finding.condition) + ' de la pieza ' + finding.tooth
+                      "
+                    >
+                      <svg lucideTrash2></svg>
+                    </button>
+                  }
+                </article>
+              } @empty {
+                <div class="no-findings">
+                  <svg lucideShieldCheck></svg>
+                  <p>Sin hallazgos registrados en esta pieza.</p>
+                </div>
+              }
+            </div>
+          </section>
 
           @if (current()!.status === 'BORRADOR' && canApprove()) {
             <div class="approval">
               <svg lucideClipboardCheck></svg>
-              <h3>Aprobación profesional</h3>
-              <p>Revisa todas las piezas. Una vez aprobado, el odontograma quedará cerrado.</p>
-              <button [disabled]="saving()" (click)="approve()">Aprobar odontograma</button>
+              <h3>Revisión profesional</h3>
+              <p>Al aprobar, este odontograma quedará cerrado para edición.</p>
+              @if (hasPendingObservation()) {
+                <p class="pending-warning">Guarda o descarta la nota pendiente antes de aprobar.</p>
+              }
+              <button
+                type="button"
+                [disabled]="saving() || hasPendingObservation()"
+                (click)="approve()"
+              >
+                Aprobar odontograma
+              </button>
             </div>
           } @else if (current()!.status === 'APROBADO') {
             <div class="approval done">

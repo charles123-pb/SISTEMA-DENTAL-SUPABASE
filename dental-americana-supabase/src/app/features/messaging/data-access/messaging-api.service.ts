@@ -1,7 +1,7 @@
 import { inject, Injectable } from '@angular/core';
-import { Observable } from 'rxjs';
+import { defer, Observable } from 'rxjs';
 import { SupabaseApiService } from '../../../core/supabase/supabase-api.service';
-import { Conversation, FollowUp, Message, WhatsAppSession } from '../models/messaging.models';
+import { Conversation, FollowUp, InboxPage, Message, WhatsAppSession } from '../models/messaging.models';
 
 @Injectable({ providedIn: 'root' })
 export class MessagingApiService {
@@ -16,11 +16,41 @@ export class MessagingApiService {
       [],
     );
   }
+  conversationsPage(search = '', before?: { at: string; id: number }, size = 30): Observable<InboxPage<Conversation>> {
+    return this.rpc<InboxPage<Conversation>>('listar_conversaciones_whatsapp_paginadas', {
+      busqueda: search || null,
+      antes_de: before?.at ?? null,
+      antes_id: before?.id ?? null,
+      tamano: size,
+    });
+  }
   conversationMessages(id: number): Observable<Message[]> {
     return this.rpc<Message[]>('listar_mensajes_conversacion', { conversacion_id: id }, []);
   }
+  conversationMessagesPage(id: number, before?: { at: string; id: number }, size = 50): Observable<InboxPage<Message>> {
+    return this.rpc<InboxPage<Message>>('listar_mensajes_conversacion_paginados', {
+      conversacion_id: id,
+      antes_de: before?.at ?? null,
+      antes_id: before?.id ?? null,
+      tamano: size,
+    });
+  }
   followUps(): Observable<FollowUp[]> {
     return this.rpc<FollowUp[]>('listar_seguimientos', {}, []);
+  }
+  workdaySummary(): Observable<{ unreadConversations: number; failedMessages: number; reviewConversations: number }> {
+    return defer(async () => {
+      const results = await Promise.all([
+        this.supabase.from('conversaciones_whatsapp').select('id', { count: 'exact', head: true }).gt('no_leidos', 0),
+        this.supabase.from('mensajes_whatsapp').select('id', { count: 'exact', head: true }).eq('estado', 'FALLIDO').eq('direccion', 'SALIENTE'),
+        this.supabase.from('conversaciones_whatsapp').select('id', { count: 'exact', head: true }).eq('estado', 'DERIVADA'),
+      ]);
+      for (const result of results) {
+        if (result.error || result.count === null)
+          this.api.fail(result.error, 'No se pudieron consultar los pendientes de WhatsApp.');
+      }
+      return { unreadConversations: results[0].count!, failedMessages: results[1].count!, reviewConversations: results[2].count! };
+    });
   }
   markRead(id: number): Observable<void> {
     return this.rpc<void>('marcar_conversacion_leida', { conversacion_id: id });
@@ -69,6 +99,9 @@ export class MessagingApiService {
           () => subscriber.next(),
         )
         .on('postgres_changes', { event: '*', schema: 'public', table: 'citas' }, () =>
+          subscriber.next(),
+        )
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'seguimientos_postconsulta' }, () =>
           subscriber.next(),
         )
         .subscribe();

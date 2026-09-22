@@ -4,12 +4,13 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { LucideAlertTriangle, LucideArrowLeft, LucideCheck, LucideChevronRight, LucideSave, LucideShieldCheck, LucideUserRound } from '@lucide/angular';
 import { SupabaseErrorService } from '../../../../core/supabase/supabase-error.service';
+import { ModalDirective } from '../../../../shared/ui/modal/modal.directive';
 import { PatientApiService } from '../../data-access/patient-api.service';
 import { DocumentType, DuplicateCandidate, PatientDetail, PatientPayload, PatientSex } from '../../models/patient.models';
 
 @Component({
   selector: 'app-patient-form',
-  imports: [ReactiveFormsModule, RouterLink, LucideAlertTriangle, LucideArrowLeft, LucideCheck,
+  imports: [ModalDirective, ReactiveFormsModule, RouterLink, LucideAlertTriangle, LucideArrowLeft, LucideCheck,
     LucideChevronRight, LucideSave, LucideShieldCheck, LucideUserRound],
   templateUrl: './patient-form.html',
   styleUrl: './patient-form.css',

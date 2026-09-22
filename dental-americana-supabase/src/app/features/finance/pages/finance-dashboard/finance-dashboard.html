@@ -23,6 +23,14 @@
       </button>
     </div>
   </header>
+  @if (contextPatientId()) {
+    <section class="patient-context" aria-label="Cobro del paciente seleccionado">
+      <div><strong>{{ contextPatientName() }}</strong><span>Cuentas y pagos filtrados para este paciente. Los indicadores generales son del consultorio.</span></div>
+      @if (!loading() && !error()) { <strong>Saldo: {{ contextBalance() | currency: 'PEN' : 'S/ ' : '1.2-2' }}</strong> }
+      @if (returnEncounterId()) { <a routerLink="/sistema/atencion" [queryParams]="{ encounterId: returnEncounterId() }">Volver a la atención</a> }
+      <a routerLink="/sistema/finanzas">Ver todos los pacientes</a>
+    </section>
+  }
   @if (error() && !modal()) {
     <div class="message error"><svg lucideAlertTriangle></svg>{{ error() }}</div>
   }
@@ -73,9 +81,9 @@
       <main>
         <nav class="tabs">
           <button [class.active]="tab() === 'accounts'" (click)="tab.set('accounts')">
-            Cuentas por cobrar <span>{{ accounts().length }}</span></button
+            Cuentas por cobrar <span>{{ contextAccounts().length }}</span></button
           ><button [class.active]="tab() === 'payments'" (click)="tab.set('payments')">
-            Pagos de hoy <span>{{ payments().length }}</span></button
+            Pagos de hoy <span>{{ contextPayments().length }}</span></button
           ><button [class.active]="tab() === 'expenses'" (click)="tab.set('expenses')">
             Gastos <span>{{ expenses().length }}</span>
           </button>
@@ -86,7 +94,7 @@
               <span>Paciente / plan</span><span>Total</span><span>Pagado</span><span>Saldo</span
               ><span>Estado</span><span></span>
             </div>
-            @for (a of accounts(); track a.id) {
+            @for (a of contextAccounts(); track a.id) {
               <article>
                 <div>
                   <strong>{{ a.patientName }}</strong
@@ -101,7 +109,7 @@
                 </button>
               </article>
             } @empty {
-              <div class="empty">No existen cuentas por cobrar.</div>
+              <div class="empty">{{ contextPatientId() ? 'No hay cuentas registradas para este paciente. Revisa su tratamiento y presupuesto antes de cobrar.' : 'No existen cuentas por cobrar.' }}</div>
             }
           </div>
         }
@@ -111,7 +119,7 @@
               <span>Constancia / paciente</span><span>Método</span><span>Referencia</span
               ><span>Monto</span><span>Fecha</span><span></span>
             </div>
-            @for (p of payments(); track p.id) {
+            @for (p of contextPayments(); track p.id) {
               <article>
                 <div>
                   <strong>{{ p.receiptNumber }}</strong

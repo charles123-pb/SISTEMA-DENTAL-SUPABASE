@@ -9,7 +9,7 @@
       <button
         class="connection"
         [attr.data-status]="session().status"
-        (click)="connectionDialog.set(true)"
+        (click)="openConnectionDialog()"
       >
         @if (session().status === 'CONECTADO') {
           <svg lucideWifi></svg>
@@ -19,7 +19,7 @@
         <span>{{ statusLabel(session().status) }}</span>
       </button>
       @if (canWrite()) {
-        <button class="primary" (click)="composeDialog.set(true)">
+        <button class="primary" (click)="openComposeDialog()">
           <svg lucidePlus></svg>Nuevo mensaje
         </button>
       }
@@ -45,7 +45,7 @@
     <button [class.active]="view() === 'chat'" (click)="view.set('chat')">
       <svg lucideMessageCircle></svg>Conversaciones
     </button>
-    <button [class.active]="view() === 'followups'" (click)="view.set('followups')">
+    <button [class.active]="view() === 'followups'" (click)="view.set('followups'); refreshQuietly()">
       <svg lucideClock3></svg>Seguimientos
       @if (alerts().length) {
         <b>{{ alerts().length }}</b>
@@ -65,7 +65,7 @@
           />
         </form>
         <div class="conversation-list">
-          @if (loading()) {
+          @if (loading() || searchingConversations()) {
             <div class="loading"><svg lucideLoaderCircle class="animate-spin"></svg>Cargando...</div>
           }
           @for (conversation of conversations(); track conversation.id) {
@@ -86,12 +86,18 @@
               </span>
             </button>
           } @empty {
-            @if (!loading()) {
+            @if (!loading() && !searchingConversations()) {
               <div class="empty">
                 <svg lucideMessageCircle></svg>
                 <p>No hay conversaciones.</p>
               </div>
             }
+          }
+          @if (hasMoreConversations()) {
+            <button class="load-more" type="button" (click)="loadMoreConversations()"
+              [disabled]="loadingMoreConversations()">
+              @if (loadingMoreConversations()) { Cargando... } @else { Mostrar más conversaciones }
+            </button>
           }
         </div>
       </aside>
@@ -109,9 +115,15 @@
               ><svg lucidePhone></svg
             ></a>
           </header>
-          <div class="messages" [class.loading]="loadingMessages()">
+          <div #messageViewport class="messages" [class.loading]="loadingMessages()">
             @if (loadingMessages()) {
               <div class="loading"><svg lucideLoaderCircle class="animate-spin"></svg></div>
+            }
+            @if (hasOlderMessages()) {
+              <button class="load-older" type="button" (click)="loadOlderMessages()"
+                [disabled]="loadingOlderMessages()">
+                @if (loadingOlderMessages()) { Cargando... } @else { Mostrar mensajes anteriores }
+              </button>
             }
             @for (message of messages(); track trackMessage($index, message)) {
               <article
@@ -150,6 +162,7 @@
               }
             }
           </div>
+          @if (canWrite()) {
           <form class="chat-composer" [formGroup]="messageForm" (ngSubmit)="send()">
             <textarea
               rows="1"
@@ -164,6 +177,7 @@
               <svg lucideSend></svg>
             </button>
           </form>
+          }
         } @else {
           <div class="chat-placeholder">
             <span><svg lucideMessageCircle></svg></span>
@@ -205,13 +219,15 @@
               >
             }
             <a [href]="'tel:+' + conversation.phone"><svg lucidePhone></svg>Llamar</a>
-            <button
-              (click)="
-                messageForm.controls.content.setValue('Hola ' + conversation.patientName + ', ')
-              "
-            >
-              <svg lucideSend></svg>Enviar mensaje
-            </button>
+            @if (canWrite()) {
+              <button
+                (click)="
+                  messageForm.controls.content.setValue('Hola ' + conversation.patientName + ', ')
+                "
+              >
+                <svg lucideSend></svg>Enviar mensaje
+              </button>
+            }
           </section>
         }
       </aside>
@@ -246,14 +262,14 @@
 </section>
 
 @if (connectionDialog()) {
-  <button class="scrim" (click)="connectionDialog.set(false)"></button>
-  <aside class="dialog connection-dialog">
+  <button type="button" class="scrim" tabindex="-1" aria-label="Cerrar conexión de WhatsApp" (click)="closeConnectionDialog()"></button>
+  <aside appModal class="dialog connection-dialog" aria-labelledby="whatsapp-connection-title" (modalDismiss)="closeConnectionDialog()">
     <header>
       <div>
         <small>Evolution API</small>
-        <h2>Conexión de WhatsApp</h2>
+        <h2 id="whatsapp-connection-title">Conexión de WhatsApp</h2>
       </div>
-      <button (click)="connectionDialog.set(false)"><svg lucideX></svg></button>
+      <button type="button" aria-label="Cerrar conexión de WhatsApp" (click)="closeConnectionDialog()"><svg lucideX></svg></button>
     </header>
     <div class="connection-body">
       <span class="status-badge" [attr.data-status]="session().status">{{
@@ -292,23 +308,26 @@
         }
       }
       @if (session().detail && session().status === 'ERROR') {
-        <p class="failure">{{ session().detail }}</p>
+        <p class="failure" role="alert">{{ session().detail }}</p>
       }
     </div>
   </aside>
 }
 
 @if (composeDialog()) {
-  <button class="scrim" (click)="composeDialog.set(false)"></button>
-  <aside class="dialog compose-dialog">
+  <button type="button" class="scrim" tabindex="-1" aria-label="Cerrar nuevo mensaje" [disabled]="saving()" (click)="closeComposeDialog()"></button>
+  <aside appModal class="dialog compose-dialog" aria-labelledby="whatsapp-compose-title" [modalDismissDisabled]="saving()" (modalDismiss)="closeComposeDialog()">
     <header>
       <div>
         <small>WhatsApp</small>
-        <h2>Nuevo mensaje</h2>
+        <h2 id="whatsapp-compose-title">Nuevo mensaje</h2>
       </div>
-      <button (click)="composeDialog.set(false)"><svg lucideX></svg></button>
+      <button type="button" aria-label="Cerrar nuevo mensaje" [disabled]="saving()" (click)="closeComposeDialog()"><svg lucideX></svg></button>
     </header>
     <form [formGroup]="composeForm" (ngSubmit)="sendNew()">
+      @if (composeError()) {
+        <div class="notice error" role="alert"><svg lucideAlertTriangle></svg>{{ composeError() }}</div>
+      }
       <label
         >Paciente
         <div class="field">

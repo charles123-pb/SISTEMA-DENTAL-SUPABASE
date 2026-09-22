@@ -33,6 +33,7 @@ import {
 import { forkJoin, Observable } from 'rxjs';
 import { AuthService } from '../../../../core/auth/auth.service';
 import { SupabaseErrorService } from '../../../../core/supabase/supabase-error.service';
+import { ModalDirective } from '../../../../shared/ui/modal/modal.directive';
 import { PatientApiService } from '../../../patients/data-access/patient-api.service';
 import { PatientSummary } from '../../../patients/models/patient.models';
 import { AppointmentApiService } from '../../data-access/appointment-api.service';
@@ -49,6 +50,7 @@ import { BookingRequest } from '../../models/booking-request.models';
 @Component({
   selector: 'app-agenda',
   imports: [
+    ModalDirective,
     ReactiveFormsModule,
     RouterLink,
     DatePipe,
@@ -166,6 +168,7 @@ export class Agenda implements OnInit {
         this.professionals.set(professionals);
         this.load();
         this.loadBookingRequest();
+        if (!this.route.snapshot.queryParamMap.has('solicitud')) this.loadPatientContext();
       },
       error: () => {
         this.loading.set(false);
@@ -226,6 +229,7 @@ export class Agenda implements OnInit {
   }
 
   openNew(request?: BookingRequest): void {
+    this.invalidatePatientSearch();
     const preferredDate =
       request?.preferredDate && request.preferredDate >= this.dateKey(new Date())
         ? request.preferredDate
@@ -259,6 +263,7 @@ export class Agenda implements OnInit {
   }
 
   openEdit(item: Appointment): void {
+    this.invalidatePatientSearch();
     this.bookingRequest.set(null);
     const patient: PatientSummary = {
       id: item.patientId,
@@ -293,10 +298,8 @@ export class Agenda implements OnInit {
 
   closeModal(): void {
     if (this.saving()) return;
-    clearTimeout(this.patientSearchTimer);
-    this.patientSearchRequestId++;
+    this.invalidatePatientSearch();
     this.slotsRequestId++;
-    this.searchingPatients.set(false);
     this.loadingSlots.set(false);
     this.modalOpen.set(false);
     this.bookingRequest.set(null);
@@ -304,11 +307,11 @@ export class Agenda implements OnInit {
   }
 
   searchPatients(query: string): void {
-    const requestId = ++this.patientSearchRequestId;
+    this.invalidatePatientSearch();
+    const requestId = this.patientSearchRequestId;
     this.form.controls.patientSearch.setValue(query);
     this.selectedPatient.set(null);
     this.selectedStart.set('');
-    clearTimeout(this.patientSearchTimer);
     if (query.trim().length < 2) {
       this.patientResults.set([]);
       this.searchingPatients.set(false);
@@ -342,6 +345,7 @@ export class Agenda implements OnInit {
   }
 
   selectPatient(patient: PatientSummary): void {
+    this.invalidatePatientSearch();
     this.selectedPatient.set(patient);
     this.patientResults.set([]);
     this.form.controls.patientSearch.setValue(patient.fullName);
@@ -352,7 +356,12 @@ export class Agenda implements OnInit {
     const professionalId = this.form.controls.professionalId.value;
     const typeId = this.form.controls.appointmentTypeId.value;
     const date = this.form.controls.date.value;
-    this.selectedStart.set(this.editing()?.start ?? '');
+    const editing = this.editing();
+    const keepCurrentSlot = editing &&
+      professionalId === editing.professionalId &&
+      typeId === editing.appointmentTypeId &&
+      date === this.dateKey(new Date(editing.start));
+    this.selectedStart.set(keepCurrentSlot ? editing.start : '');
     this.availability.set([]);
     if (!professionalId || !typeId || !date) {
       this.loadingSlots.set(false);
@@ -551,7 +560,42 @@ export class Agenda implements OnInit {
       },
     });
   }
+  private loadPatientContext(): void {
+    const query = this.route.snapshot.queryParamMap;
+    const patientId = Number(query.get('patientId'));
+    if (!this.canWrite() || !Number.isSafeInteger(patientId) || patientId <= 0) return;
+    const requestId = ++this.patientSearchRequestId;
+    this.patientsApi.get(patientId).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: (patient) => {
+        if (requestId !== this.patientSearchRequestId) return;
+        if (!patient.active) {
+          this.error.set('El paciente está inactivo. Revisa su ficha antes de agendar.');
+          return;
+        }
+        this.openNew();
+        this.selectPatient({
+          ...patient,
+          fullName: [patient.firstNames, patient.paternalSurname, patient.maternalSurname].filter(Boolean).join(' '),
+          activeAllergies: patient.allergies.filter((allergy) => allergy.status === 'ACTIVA').length,
+        });
+        const professionalId = Number(query.get('professionalId'));
+        if (this.professionals().some((professional) => professional.id === professionalId))
+          this.form.controls.professionalId.setValue(professionalId);
+        const date = query.get('date') ?? '';
+        if (/^\d{4}-\d{2}-\d{2}$/.test(date) && this.dateKey(this.parseDate(date)) === date
+          && date >= this.dateKey(new Date())) this.form.controls.date.setValue(date);
+        if (query.get('control') === '1') this.form.controls.reason.setValue('Control');
+        this.loadSlots();
+      },
+      error: (error: unknown) => {
+        if (requestId === this.patientSearchRequestId)
+          this.error.set(this.errors.toUserMessage(error, 'No se pudo precargar al paciente.'));
+      },
+    });
+  }
   private findPatientForRequest(request: BookingRequest): void {
+    this.invalidatePatientSearch();
+    const requestId = this.patientSearchRequestId;
     const query = request.mobile || request.documentNumber || request.fullName;
     this.searchingPatients.set(true);
     this.patientsApi
@@ -559,6 +603,7 @@ export class Agenda implements OnInit {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (result) => {
+          if (requestId !== this.patientSearchRequestId) return;
           this.searchingPatients.set(false);
           const mobile = this.comparablePhone(request.mobile);
           const exact = result.content.find(
@@ -574,16 +619,24 @@ export class Agenda implements OnInit {
           }
         },
         error: () => {
+          if (requestId !== this.patientSearchRequestId) return;
           this.searchingPatients.set(false);
           this.form.controls.patientSearch.setValue(request.fullName);
         },
       });
   }
+  private invalidatePatientSearch(): void {
+    clearTimeout(this.patientSearchTimer);
+    this.patientSearchRequestId++;
+    this.searchingPatients.set(false);
+    this.patientResults.set([]);
+  }
   private clearBookingQuery(): void {
-    if (!this.route.snapshot.queryParamMap.has('solicitud')) return;
+    if (!['solicitud', 'patientId', 'professionalId', 'date', 'control']
+      .some((key) => this.route.snapshot.queryParamMap.has(key))) return;
     void this.router.navigate([], {
       relativeTo: this.route,
-      queryParams: { solicitud: null },
+      queryParams: { solicitud: null, patientId: null, professionalId: null, date: null, control: null },
       queryParamsHandling: 'merge',
       replaceUrl: true,
     });

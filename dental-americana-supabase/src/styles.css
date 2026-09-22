@@ -1,12 +1,25 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap');
+@import '@fontsource-variable/inter/wght.css';
+@import '@fontsource-variable/manrope/wght.css';
 @import 'tailwindcss';
+
+@media print {
+  @page clinical-history { size: A4; margin: 15mm; }
+  app-patient-clinical-report { page: clinical-history; }
+  body:has(app-patient-clinical-report) { min-width: 0; background: white; }
+  app-system-shell:has(app-patient-clinical-report) .sidebar,
+  app-system-shell:has(app-patient-clinical-report) .topbar,
+  app-system-shell:has(app-patient-clinical-report) .mobile-nav,
+  app-system-shell:has(app-patient-clinical-report) .scrim { display: none !important; }
+  app-system-shell:has(app-patient-clinical-report) .workspace { padding: 0 !important; min-height: 0; }
+  app-system-shell:has(app-patient-clinical-report) .system-layout { background: white; min-height: 0; }
+}
 
 :root { --primary:#2563eb; --primary-strong:#1769e0; --primary-soft:#eaf2ff; --ink:#172033; --muted:#6b7280; --canvas:#f5f7fb; --card:#fff; --border:#e7ecf3; --clinical:#123b41; --success:#20a970; --warning:#f59e0b; --danger:#e34c67; }
 * { box-sizing: border-box; }
 html { background: var(--canvas); }
-body { margin:0; min-width:320px; color:var(--ink); background:var(--canvas); font-family:'Inter',system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+body { margin:0; min-width:320px; color:var(--ink); background:var(--canvas); font-family:'Inter Variable',system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
 button,input { font:inherit; } button { cursor:pointer; }
-h1,h2,h3,h4 { margin:0; font-family:'Manrope','Inter',sans-serif; }
+h1,h2,h3,h4 { margin:0; font-family:'Manrope Variable','Inter Variable',sans-serif; }
 .focus-ring:focus-visible { outline:3px solid rgba(96,165,250,.65); outline-offset:3px; }
 
 @layer components {

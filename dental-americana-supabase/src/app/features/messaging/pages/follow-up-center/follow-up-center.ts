@@ -3,7 +3,9 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  ElementRef,
   OnInit,
+  ViewChild,
   computed,
   inject,
   signal,
@@ -30,8 +32,9 @@ import {
   LucideWifiOff,
   LucideX,
 } from '@lucide/angular';
-import { finalize, forkJoin, interval } from 'rxjs';
+import { finalize, forkJoin, fromEvent, interval, of } from 'rxjs';
 import { AuthService } from '../../../../core/auth/auth.service';
+import { ModalDirective } from '../../../../shared/ui/modal/modal.directive';
 import { PatientApiService } from '../../../patients/data-access/patient-api.service';
 import { PatientSummary } from '../../../patients/models/patient.models';
 import { MessagingApiService } from '../../data-access/messaging-api.service';
@@ -41,6 +44,7 @@ type View = 'chat' | 'followups';
 @Component({
   selector: 'app-follow-up-center',
   imports: [
+    ModalDirective,
     RouterLink,
     ReactiveFormsModule,
     DatePipe,
@@ -67,13 +71,19 @@ type View = 'chat' | 'followups';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class FollowUpCenter implements OnInit {
+  @ViewChild('messageViewport') private messageViewport?: ElementRef<HTMLDivElement>;
   private readonly fb = inject(FormBuilder).nonNullable;
   private readonly destroyRef = inject(DestroyRef);
   private readonly api = inject(MessagingApiService);
   private readonly patientApi = inject(PatientApiService);
   private readonly auth = inject(AuthService);
   readonly conversations = signal<Conversation[]>([]);
+  readonly hasMoreConversations = signal(false);
+  readonly loadingMoreConversations = signal(false);
+  readonly searchingConversations = signal(false);
   readonly messages = signal<Message[]>([]);
+  readonly hasOlderMessages = signal(false);
+  readonly loadingOlderMessages = signal(false);
   readonly followups = signal<FollowUp[]>([]);
   readonly selected = signal<Conversation | null>(null);
   readonly session = signal<WhatsAppSession>({ status: 'DESCONECTADO' });
@@ -83,6 +93,7 @@ export class FollowUpCenter implements OnInit {
   readonly syncing = signal(false);
   readonly refreshing = signal(false);
   readonly error = signal('');
+  readonly composeError = signal('');
   readonly success = signal('');
   readonly view = signal<View>('chat');
   readonly connectionDialog = signal(false);
@@ -95,6 +106,11 @@ export class FollowUpCenter implements OnInit {
   private patientSearchTimer?: ReturnType<typeof setTimeout>;
   private qrRefreshTimer?: ReturnType<typeof setTimeout>;
   private refreshQueued = false;
+  private conversationQueryVersion = 0;
+  private messageContextVersion = 0;
+  private latestMessageRequestVersion = 0;
+  private patientSearchVersion = 0;
+  private readonly markingRead = new Set<number>();
   readonly searchForm = this.fb.group({ query: [''] });
   readonly messageForm = this.fb.group({
     content: ['', [Validators.required, Validators.maxLength(4000)]],
@@ -119,22 +135,33 @@ export class FollowUpCenter implements OnInit {
       .subscribe(() => {
         if (!document.hidden && !this.saving() && !this.syncing()) this.refreshQuietly();
       });
+    fromEvent(window, 'online').pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => this.refreshQuietly());
+    fromEvent(document, 'visibilitychange').pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => {
+        if (!document.hidden) this.refreshQuietly();
+      });
   }
   loadAll() {
     this.loading.set(true);
     this.error.set('');
+    const queryVersion = this.conversationQueryVersion;
     forkJoin({
-      conversations: this.api.conversations(this.searchForm.controls.query.value),
+      conversations: this.api.conversationsPage(this.searchForm.controls.query.value),
       followups: this.api.followUps(),
       session: this.api.session(),
-    }).subscribe({
+    }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (data) => {
-        this.conversations.set(data.conversations);
+        if (queryVersion === this.conversationQueryVersion) {
+          this.conversations.set(data.conversations.items);
+          this.hasMoreConversations.set(data.conversations.hasMore);
+        }
         this.followups.set(data.followups);
         this.applySessionState(data.session);
         this.reconcileSelection();
         this.loading.set(false);
-        if (this.canWrite() && data.session.status === 'CONECTADO' && !data.conversations.length) {
+        if (queryVersion === this.conversationQueryVersion && !this.searchForm.controls.query.value
+          && this.canWrite() && data.session.status === 'CONECTADO' && !data.conversations.items.length) {
           this.syncChats(false);
         }
       },
@@ -150,71 +177,164 @@ export class FollowUpCenter implements OnInit {
       return;
     }
     this.refreshing.set(true);
+    const queryVersion = this.conversationQueryVersion;
     forkJoin({
-      conversations: this.api.conversations(this.searchForm.controls.query.value),
+      conversations: this.api.conversationsPage(this.searchForm.controls.query.value),
       session: this.api.session(),
+      followups: this.view() === 'followups' ? this.api.followUps() : of(null),
     }).pipe(finalize(() => {
       this.refreshing.set(false);
       if (this.refreshQueued) {
         this.refreshQueued = false;
         this.refreshQuietly();
       }
-    })).subscribe({
-      next: ({ conversations, session }) => {
-        this.conversations.set(conversations);
+    }), takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: ({ conversations, session, followups }) => {
+        if (queryVersion === this.conversationQueryVersion) {
+          this.conversations.set(this.mergeConversations(conversations.items, this.conversations()));
+          if (this.conversations().length <= conversations.items.length) {
+            this.hasMoreConversations.set(conversations.hasMore);
+          }
+        }
         this.applySessionState(session);
+        if (followups) this.followups.set(followups);
         this.reconcileSelection();
         const current = this.selected();
-        if (current) this.loadMessages(current.id, false);
+        if (this.view() === 'chat' && current) {
+          this.loadMessages(current.id, false);
+          if (current.unreadCount) this.markConversationRead(current.id);
+        }
       },
     });
   }
   filterConversations() {
     clearTimeout(this.conversationSearchTimer);
-    this.conversationSearchTimer = setTimeout(
-      () =>
-        this.api
-          .conversations(this.searchForm.controls.query.value)
-          .subscribe({ next: (items) => this.conversations.set(items) }),
-      250,
-    );
-  }
-  openConversation(conversation: Conversation) {
-    this.selected.set(conversation);
-    this.loadMessages(conversation.id, true);
-    if (conversation.unreadCount)
-      this.api.markRead(conversation.id).subscribe({
-        next: () => {
-          this.conversations.update((items) =>
-            items.map((item) => (item.id === conversation.id ? { ...item, unreadCount: 0 } : item)),
-          );
+    const queryVersion = ++this.conversationQueryVersion;
+    const query = this.searchForm.controls.query.value;
+    this.conversations.set([]);
+    this.hasMoreConversations.set(false);
+    this.loadingMoreConversations.set(false);
+    this.searchingConversations.set(true);
+    this.conversationSearchTimer = setTimeout(() => {
+      this.api.conversationsPage(query).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+        next: (page) => {
+          if (queryVersion !== this.conversationQueryVersion) return;
+          this.conversations.set(page.items);
+          this.hasMoreConversations.set(page.hasMore);
+          this.searchingConversations.set(false);
+          this.reconcileSelection();
+        },
+        error: (error) => {
+          if (queryVersion === this.conversationQueryVersion) {
+            this.searchingConversations.set(false);
+            this.error.set(error.message);
+          }
         },
       });
+    }, 250);
+  }
+  loadMoreConversations() {
+    if (!this.hasMoreConversations() || this.loadingMoreConversations()) return;
+    const last = this.conversations().at(-1);
+    if (!last?.lastMessageAt) return;
+    const queryVersion = this.conversationQueryVersion;
+    this.loadingMoreConversations.set(true);
+    this.api.conversationsPage(this.searchForm.controls.query.value, {
+      at: last.lastMessageAt, id: last.id,
+    }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: (page) => {
+        if (queryVersion !== this.conversationQueryVersion) return;
+        this.loadingMoreConversations.set(false);
+        this.conversations.set(this.mergeConversations(this.conversations(), page.items));
+        this.hasMoreConversations.set(page.hasMore);
+      },
+      error: (error) => {
+        if (queryVersion === this.conversationQueryVersion) {
+          this.loadingMoreConversations.set(false);
+          this.error.set(error.message);
+        }
+      },
+    });
+  }
+  openConversation(conversation: Conversation) {
+    this.messageContextVersion++;
+    this.selected.set(conversation);
+    this.messages.set([]);
+    this.hasOlderMessages.set(false);
+    this.loadingOlderMessages.set(false);
+    this.loadMessages(conversation.id, true);
+    if (conversation.unreadCount) this.markConversationRead(conversation.id);
   }
   loadMessages(id: number, showLoader = true) {
     if (showLoader) this.loadingMessages.set(true);
-    this.api.conversationMessages(id).subscribe({
-      next: (items) => {
-        this.messages.set(items);
+    const contextVersion = this.messageContextVersion;
+    const requestVersion = ++this.latestMessageRequestVersion;
+    this.api.conversationMessagesPage(id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: (page) => {
+        if (contextVersion !== this.messageContextVersion || requestVersion !== this.latestMessageRequestVersion
+          || this.selected()?.id !== id) return;
+        const viewport = this.messageViewport?.nativeElement;
+        const nearBottom = !viewport || showLoader
+          || viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 80;
+        const hadMessages = this.messages().length > 0;
+        this.messages.set(showLoader ? page.items : this.mergeMessages(this.messages(), page.items));
+        if (showLoader || !hadMessages) this.hasOlderMessages.set(page.hasMore);
         this.loadingMessages.set(false);
+        if (nearBottom) requestAnimationFrame(() => {
+          if (this.selected()?.id === id && viewport) viewport.scrollTop = viewport.scrollHeight;
+        });
       },
       error: (error) => {
+        if (contextVersion !== this.messageContextVersion || requestVersion !== this.latestMessageRequestVersion
+          || this.selected()?.id !== id) return;
         this.loadingMessages.set(false);
         this.error.set(error.message);
       },
     });
   }
+  loadOlderMessages() {
+    const conversation = this.selected();
+    const oldest = this.messages()[0];
+    if (!conversation || !oldest || !this.hasOlderMessages() || this.loadingOlderMessages()) return;
+    const contextVersion = this.messageContextVersion;
+    this.loadingOlderMessages.set(true);
+    this.api.conversationMessagesPage(conversation.id, {
+      at: oldest.createdAt, id: oldest.id,
+    }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: (page) => {
+        if (contextVersion !== this.messageContextVersion || this.selected()?.id !== conversation.id) return;
+        this.loadingOlderMessages.set(false);
+        const viewport = this.messageViewport?.nativeElement;
+        const previousHeight = viewport?.scrollHeight ?? 0;
+        const previousTop = viewport?.scrollTop ?? 0;
+        this.messages.set(this.mergeMessages(page.items, this.messages()));
+        this.hasOlderMessages.set(page.hasMore);
+        requestAnimationFrame(() => {
+          if (this.selected()?.id === conversation.id && viewport) {
+            viewport.scrollTop = previousTop + viewport.scrollHeight - previousHeight;
+          }
+        });
+      },
+      error: (error) => {
+        if (contextVersion === this.messageContextVersion) {
+          this.loadingOlderMessages.set(false);
+          this.error.set(error.message);
+        }
+      },
+    });
+  }
   send() {
+    if (!this.canWrite() || this.saving()) return;
     const conversation = this.selected();
     const content = this.messageForm.controls.content.value.trim();
     if (!conversation?.patientId || !content || this.messageForm.invalid) return;
     this.saving.set(true);
     this.error.set('');
-    this.api.send(conversation.patientId, content).subscribe({
+    this.api.send(conversation.patientId, content).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.saving.set(false);
         this.messageForm.reset();
-        this.loadMessages(conversation.id);
+        if (this.selected()?.id === conversation.id) this.loadMessages(conversation.id, false);
       },
       error: (error) => {
         this.saving.set(false);
@@ -229,11 +349,12 @@ export class FollowUpCenter implements OnInit {
     this.send();
   }
   retry(message: Message) {
+    if (!this.canWrite() || this.saving()) return;
     this.saving.set(true);
-    this.api.retry(message.id).subscribe({
+    this.api.retry(message.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.saving.set(false);
-        if (this.selected()) this.loadMessages(this.selected()!.id);
+        if (this.selected()) this.loadMessages(this.selected()!.id, false);
       },
       error: (error) => {
         this.saving.set(false);
@@ -242,15 +363,14 @@ export class FollowUpCenter implements OnInit {
     });
   }
   connect() {
-    if (!this.canWrite()) return;
+    if (!this.canWrite() || this.saving()) return;
     this.saving.set(true);
     this.session.update((current) => ({ ...current, status: 'CONECTANDO', detail: undefined }));
-    this.api.connect().subscribe({
+    this.api.connect().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (state) => {
         this.saving.set(false);
         this.session.set(state);
-        this.connectionDialog.set(true);
-        if (state.qrCode || state.pairingCode) this.scheduleQrRefresh();
+        if (this.connectionDialog() && (state.qrCode || state.pairingCode)) this.scheduleQrRefresh();
       },
       error: (error) => {
         this.saving.set(false);
@@ -259,15 +379,35 @@ export class FollowUpCenter implements OnInit {
       },
     });
   }
+  openConnectionDialog(): void {
+    this.connectionDialog.set(true);
+    if (this.canWrite() && this.session().status === 'CONECTANDO') this.scheduleQrRefresh();
+  }
+  closeConnectionDialog(): void {
+    this.connectionDialog.set(false);
+    clearTimeout(this.qrRefreshTimer);
+  }
+  openComposeDialog(): void {
+    this.composeError.set('');
+    this.composeDialog.set(true);
+  }
+  closeComposeDialog(): void {
+    if (!this.saving()) this.composeDialog.set(false);
+  }
   syncChats(showMessage = true) {
-    if (this.syncing()) return;
+    if (!this.canWrite() || this.syncing()) return;
     this.syncing.set(true);
     this.error.set('');
-    this.api.sync().subscribe({
+    this.api.sync().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (result) => {
-        this.api.conversations(this.searchForm.controls.query.value).subscribe({
-          next: (items) => {
-            this.conversations.set(items);
+        const queryVersion = this.conversationQueryVersion;
+        this.api.conversationsPage(this.searchForm.controls.query.value)
+          .pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+          next: (page) => {
+            if (queryVersion === this.conversationQueryVersion) {
+              this.conversations.set(this.mergeConversations(page.items, this.conversations()));
+              this.hasMoreConversations.set(page.hasMore);
+            }
             this.reconcileSelection();
             this.syncing.set(false);
             if (showMessage)
@@ -289,36 +429,49 @@ export class FollowUpCenter implements OnInit {
   }
   searchPatients(query: string) {
     clearTimeout(this.patientSearchTimer);
+    const searchVersion = ++this.patientSearchVersion;
+    this.composeError.set('');
+    this.results.set([]);
     this.selectedPatient.set(null);
     if (query.trim().length < 2) {
       this.results.set([]);
       return;
     }
-    this.patientSearchTimer = setTimeout(
-      () =>
-        this.patientApi
-          .search({ q: query.trim(), active: true, page: 0, size: 8 })
-          .subscribe((result) => this.results.set(result.content)),
-      250,
-    );
+    this.patientSearchTimer = setTimeout(() => {
+      this.patientApi.search({ q: query.trim(), active: true, page: 0, size: 8 })
+        .pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+          next: (result) => {
+            if (searchVersion === this.patientSearchVersion) this.results.set(result.content);
+          },
+          error: (error) => {
+            if (searchVersion === this.patientSearchVersion)
+              this.composeError.set(error.message || 'No se pudo buscar al paciente.');
+          },
+        });
+    }, 250);
   }
   selectPatient(patient: PatientSummary) {
     if (!patient.mobile || !patient.whatsappConsent) {
-      this.error.set(
+      this.selectedPatient.set(null);
+      this.composeError.set(
         !patient.mobile ? 'El paciente no tiene celular.' : 'El paciente no autorizó WhatsApp.',
       );
       return;
     }
+    this.composeError.set('');
+    this.patientSearchVersion++;
     this.selectedPatient.set(patient);
     this.results.set([]);
     this.composeForm.controls.search.setValue(patient.fullName);
   }
   sendNew() {
+    if (!this.canWrite() || this.saving()) return;
     const patient = this.selectedPatient();
     const content = this.composeForm.controls.content.value.trim();
     if (!patient || !content) return;
+    this.composeError.set('');
     this.saving.set(true);
-    this.api.send(patient.id, content).subscribe({
+    this.api.send(patient.id, content).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.saving.set(false);
         this.composeDialog.set(false);
@@ -328,14 +481,16 @@ export class FollowUpCenter implements OnInit {
       },
       error: (error) => {
         this.saving.set(false);
-        this.error.set(error.message);
+        this.composeError.set(error.message || 'No se pudo enviar el mensaje. Inténtalo nuevamente.');
       },
     });
   }
   review(followup: FollowUp) {
+    if (!this.canWrite()) return;
     if (!confirm('¿Confirmas que revisaste profesionalmente esta respuesta?')) return;
     this.api
       .review(followup.id, followup.version)
+      .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({ next: () => this.loadAll(), error: (e) => this.error.set(e.message) });
   }
   statusLabel(value: string) {
@@ -351,6 +506,35 @@ export class FollowUpCenter implements OnInit {
   }
   trackMessage(_index: number, message: Message) {
     return message.id;
+  }
+  private markConversationRead(id: number) {
+    if (this.markingRead.has(id)) return;
+    this.markingRead.add(id);
+    this.api.markRead(id).pipe(
+      finalize(() => this.markingRead.delete(id)),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe({
+      next: () => {
+        this.conversations.update((items) =>
+          items.map((item) => item.id === id ? { ...item, unreadCount: 0 } : item));
+        this.selected.update((item) => item?.id === id ? { ...item, unreadCount: 0 } : item);
+      },
+      error: (error) => this.error.set(error.message),
+    });
+  }
+  private mergeConversations(first: Conversation[], second: Conversation[]): Conversation[] {
+    const byId = new Map<number, Conversation>();
+    for (const item of second) byId.set(item.id, item);
+    for (const item of first) byId.set(item.id, item);
+    return [...byId.values()].sort((a, b) =>
+      (b.lastMessageAt ?? '').localeCompare(a.lastMessageAt ?? '') || b.id - a.id);
+  }
+  private mergeMessages(first: Message[], second: Message[]): Message[] {
+    const byId = new Map<number, Message>();
+    for (const item of first) byId.set(item.id, item);
+    for (const item of second) byId.set(item.id, item);
+    return [...byId.values()].sort((a, b) =>
+      a.createdAt.localeCompare(b.createdAt) || a.id - b.id);
   }
   private applySessionState(state: WhatsAppSession) {
     const current = this.session();
@@ -374,13 +558,9 @@ export class FollowUpCenter implements OnInit {
   private scheduleQrRefresh() {
     clearTimeout(this.qrRefreshTimer);
     this.qrRefreshTimer = setTimeout(() => {
-      if (
-        this.connectionDialog() &&
-        this.session().status === 'CONECTANDO' &&
-        !this.saving()
-      ) {
-        this.connect();
-      }
+      if (!this.connectionDialog() || this.session().status !== 'CONECTANDO') return;
+      if (this.saving()) this.scheduleQrRefresh();
+      else this.connect();
     }, 25_000);
   }
   private reconcileSelection() {

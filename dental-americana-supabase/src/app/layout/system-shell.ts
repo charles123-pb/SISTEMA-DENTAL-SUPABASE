@@ -1,7 +1,8 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ViewChild, computed, inject, signal } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { LucideBell, LucideBot, LucideCalendarDays, LucideLayoutDashboard, LucideLogOut, LucideMenu, LucideMessageCircle, LucideSearch, LucideSettings, LucideStethoscope, LucideUsers, LucideWalletCards } from '@lucide/angular';
 import { AuthService } from '../core/auth/auth.service';
+import { canLeaveEditor, PendingChangesEditor } from '../core/navigation/pending-changes.guard';
 
 @Component({
   selector: 'app-system-shell',
@@ -11,6 +12,7 @@ import { AuthService } from '../core/auth/auth.service';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SystemShell {
+  @ViewChild(RouterOutlet) private outlet?: RouterOutlet;
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
   readonly menuOpen = signal(false);
@@ -32,6 +34,9 @@ export class SystemShell {
   }
 
   logout(): void {
+    const editor = this.outlet?.isActivated ? this.outlet.component as Partial<PendingChangesEditor> : null;
+    if (editor && typeof editor.hasUnsavedChanges === 'function' && typeof editor.isSavingChanges === 'function'
+      && !canLeaveEditor(editor as PendingChangesEditor)) return;
     this.auth.logout();
     void this.router.navigate(['/sistema/login']);
   }

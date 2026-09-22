@@ -205,6 +205,18 @@
 .conversation-list > button.active {
   background: #eaf5f6;
 }
+.conversation-list > button.load-more {
+  display: block;
+  padding: 13px;
+  color: #167d8e;
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-align: center;
+}
+.conversation-list > button.load-more:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
 .avatar,
 .large-avatar {
   display: grid;
@@ -304,6 +316,21 @@
   background-color: #eef3f2;
   background-image: radial-gradient(#9fb7b522 0.7px, transparent 0.7px);
   background-size: 10px 10px;
+}
+.messages > button.load-older {
+  align-self: center;
+  padding: 7px 12px;
+  border: 1px solid #c8dfe2;
+  border-radius: 999px;
+  color: #167d8e;
+  background: #fff;
+  font-size: 0.62rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+.messages > button.load-older:disabled {
+  opacity: 0.55;
+  cursor: wait;
 }
 .messages > article {
   max-width: 72%;

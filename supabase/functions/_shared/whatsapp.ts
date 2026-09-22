@@ -1,6 +1,17 @@
 export type EvolutionConnectionStatus = 'CONECTADO' | 'DESCONECTADO' | 'CONECTANDO' | 'ERROR';
 export type JsonRecord = Record<string, unknown>;
 
+export class EvolutionRequestError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
+}
+
+// Only an explicit rate-limit rejection is retried automatically. A timeout or
+// server error may occur after delivery and needs reconciliation by an operator.
+export function retryDelay(error: unknown, attempts: number, maxAttempts: number): number | null {
+  if (!(error instanceof EvolutionRequestError) || error.status !== 429 || attempts >= maxAttempts) return null;
+  return [60_000, 300_000, 900_000][Math.min(Math.max(attempts - 1, 0), 2)];
+}
+
 const asRecord = (value: unknown): JsonRecord =>
   value && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : {};
 
@@ -18,10 +29,22 @@ const configuration = () => {
 
 const evolutionRequest = async (path: string, init: RequestInit = {}) => {
   const { baseUrl, apiKey } = configuration();
+  const accessClientId = Deno.env.get('CF_ACCESS_CLIENT_ID')?.trim();
+  const accessClientSecret = Deno.env.get('CF_ACCESS_CLIENT_SECRET')?.trim();
+  if (Boolean(accessClientId) !== Boolean(accessClientSecret)) {
+    throw new Error('Cloudflare Access está configurado de forma incompleta');
+  }
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     signal: init.signal ?? AbortSignal.timeout(20_000),
-    headers: { apikey: apiKey, 'Content-Type': 'application/json', ...init.headers },
+    headers: {
+      apikey: apiKey,
+      'Content-Type': 'application/json',
+      ...(accessClientId && accessClientSecret
+        ? { 'CF-Access-Client-Id': accessClientId, 'CF-Access-Client-Secret': accessClientSecret }
+        : {}),
+      ...init.headers,
+    },
   });
   const payload: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -34,7 +57,7 @@ const evolutionRequest = async (path: string, init: RequestInit = {}) => {
       : message && typeof message === 'object'
         ? JSON.stringify(message).slice(0, 500)
         : '';
-    throw new Error(detail || `Evolution API respondió ${response.status}`);
+    throw new EvolutionRequestError(detail || `Evolution API respondió ${response.status}`, response.status);
   }
   return payload;
 };

@@ -45,8 +45,8 @@
 </section>
 
 @if(duplicateReviewOpen()){
-  <button class="modal-scrim" type="button" aria-label="Cerrar revisión" (click)="duplicateReviewOpen.set(false)"></button>
-  <section class="duplicate-modal" role="dialog" aria-modal="true" aria-labelledby="duplicate-title">
+  <button class="modal-scrim" type="button" tabindex="-1" aria-label="Cerrar revisión" (click)="duplicateReviewOpen.set(false)"></button>
+  <section appModal class="duplicate-modal" aria-labelledby="duplicate-title" (modalDismiss)="duplicateReviewOpen.set(false)">
     <span class="warning-icon"><svg lucideAlertTriangle></svg></span><h2 id="duplicate-title">Revisa posibles duplicados</h2><p>Encontramos fichas parecidas. Selecciona la correcta o confirma que se trata de otra persona.</p>
     <div class="candidate-list">@for(item of duplicates();track item.id){<a [routerLink]="['/sistema/pacientes',item.id]"><span><strong>{{item.fullName}}</strong><small>{{item.historyNumber}} · {{item.documentNumber || 'Sin documento'}}</small></span><b>{{item.reason}}</b><svg lucideChevronRight></svg></a>}</div>
     <footer><button type="button" (click)="duplicateReviewOpen.set(false)">Volver y revisar</button><button class="continue" type="button" (click)="submit(true)"><svg lucideCheck></svg>Es otra persona, crear</button></footer>

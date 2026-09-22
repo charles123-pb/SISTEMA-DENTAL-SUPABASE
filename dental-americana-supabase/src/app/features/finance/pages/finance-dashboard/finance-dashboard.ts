@@ -4,11 +4,13 @@ import {
   Component,
   DestroyRef,
   OnInit,
+  computed,
   inject,
   signal,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import {
   LucideAlertTriangle,
   LucideArrowDownRight,
@@ -43,6 +45,7 @@ type FinanceTab = 'accounts' | 'payments' | 'expenses';
 @Component({
   selector: 'app-finance-dashboard',
   imports: [
+    RouterLink,
     ReactiveFormsModule,
     CurrencyPipe,
     DatePipe,
@@ -73,9 +76,21 @@ export class FinanceDashboardPage implements OnInit {
   private readonly auth = inject(AuthService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly errors = inject(SupabaseErrorService);
+  private readonly route = inject(ActivatedRoute);
   private loadRequestId = 0;
   readonly dashboard = signal<FinanceDashboard | null>(null);
   readonly accounts = signal<Account[]>([]);
+  readonly contextPatientId = signal<number | null>(null);
+  readonly returnEncounterId = signal<number | null>(null);
+  readonly contextAccounts = computed(() => this.accounts().filter((account) =>
+    !this.contextPatientId() || account.patientId === this.contextPatientId()));
+  readonly contextPayments = computed(() => this.payments().filter((payment) =>
+    !this.contextPatientId() || payment.patientId === this.contextPatientId()));
+  readonly contextPatientName = computed(() => this.contextAccounts()[0]?.patientName
+    ?? this.contextPayments()[0]?.patientName ?? 'Paciente #' + this.contextPatientId());
+  readonly contextBalance = computed(() => this.contextAccounts()
+    .filter((account) => account.status === 'PENDIENTE' || account.status === 'PARCIAL')
+    .reduce((sum, account) => sum + account.balance, 0));
   readonly methods = signal<PaymentMethod[]>([]);
   readonly payments = signal<Payment[]>([]);
   readonly expenses = signal<Expense[]>([]);
@@ -107,6 +122,13 @@ export class FinanceDashboardPage implements OnInit {
     observation: ['', Validators.maxLength(1000)],
   });
   ngOnInit(): void {
+    this.route.queryParamMap.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((query) => {
+      const patientId = Number(query.get('patientId'));
+      const encounterId = Number(query.get('encounterId'));
+      this.contextPatientId.set(Number.isSafeInteger(patientId) && patientId > 0 ? patientId : null);
+      this.returnEncounterId.set(Number.isSafeInteger(encounterId) && encounterId > 0 ? encounterId : null);
+      this.tab.set('accounts');
+    });
     this.load();
   }
   downloadReceipt(payment: Payment): void {

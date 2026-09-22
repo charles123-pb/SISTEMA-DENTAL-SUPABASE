@@ -7,7 +7,8 @@ docker compose up -d
 curl http://localhost:8080
 ```
 
-Esta instalación es para pruebas: la computadora debe permanecer encendida. Para que Supabase pueda
+Esta instalación usa el DNS actual de Docker y del equipo; no fije una IP de una red Wi-Fi anterior.
+Es para pruebas: la computadora debe permanecer encendida. Para que Supabase pueda
 llamar a Evolution API necesitaremos un túnel público temporal (Cloudflare Tunnel).
 
 ## Túnel Cloudflare temporal

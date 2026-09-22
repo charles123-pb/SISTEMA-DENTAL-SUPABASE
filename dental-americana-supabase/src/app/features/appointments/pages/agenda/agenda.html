@@ -1,6 +1,6 @@
 <section class="agenda-page">
   <header class="page-heading">
-    <div>
+    <div class="heading-copy">
       <span class="eyebrow">Agenda clínica</span>
       <h1>Organiza el día sin perder el contexto</h1>
       <p>Consulta horarios, confirma citas y acompaña el avance de cada paciente.</p>
@@ -205,12 +205,13 @@
 </section>
 
 @if (modalOpen()) {
-  <button class="modal-scrim" aria-label="Cerrar" (click)="closeModal()"></button>
+  <button type="button" class="modal-scrim" tabindex="-1" aria-label="Cerrar" [disabled]="saving()" (click)="closeModal()"></button>
   <section
+    appModal
     class="appointment-modal"
-    role="dialog"
-    aria-modal="true"
     aria-labelledby="appointment-title"
+    [modalDismissDisabled]="saving()"
+    (modalDismiss)="closeModal()"
   >
     <header>
       <div>
@@ -230,7 +231,7 @@
           </h2>
         </div>
       </div>
-      <button class="close" (click)="closeModal()"><svg lucideX></svg></button>
+      <button type="button" class="close" aria-label="Cerrar cita" [disabled]="saving()" (click)="closeModal()"><svg lucideX></svg></button>
     </header>
     <form [formGroup]="form" (ngSubmit)="save()">
       @if (error()) {

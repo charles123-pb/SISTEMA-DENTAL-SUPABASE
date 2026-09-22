@@ -11,7 +11,7 @@
     </div>
   } @else {
     <header class="top">
-      <a routerLink="/sistema/atencion"><svg lucideArrowLeft></svg></a
+      <a routerLink="/sistema/atencion" [queryParams]="{ encounterId: encounter()?.id }"><svg lucideArrowLeft></svg></a
       ><span>{{ encounter()!.patientName.slice(0, 1) }}</span>
       <div>
         <small>{{ encounter()!.patientHistoryNumber }} · Atención {{ encounter()!.id }}</small>

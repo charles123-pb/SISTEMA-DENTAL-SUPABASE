@@ -53,18 +53,18 @@ Deno.serve(async (request) => {
     if (claim.error) throw new Error(claim.error.message);
     if (!claim.data) throw new HttpError(409, 'El mensaje ya está siendo procesado');
 
-    const conversation = await admin.from('conversaciones_whatsapp').select('telefono')
-      .eq('id', conversationId).single();
-    if (conversation.error || !conversation.data) {
+    const eligibility = await admin.rpc('validar_envio_whatsapp', { mensaje_id: messageId });
+    if (eligibility.error || !eligibility.data) {
+      const reason = eligibility.error?.message ?? 'Envío no autorizado';
       await admin.from('mensajes_whatsapp').update({ estado: 'FALLIDO',
-        error_detalle: 'Conversación no encontrada', ultimo_intento_en: new Date().toISOString() })
+        error_detalle: reason.slice(0, 500), ultimo_intento_en: new Date().toISOString() })
         .eq('id', messageId).eq('estado', 'EN_PROCESO');
-      throw new HttpError(404, 'Conversación no encontrada');
+      throw new HttpError(409, reason);
     }
 
     let providerId: string;
     try {
-      providerId = await sendWhatsApp(conversation.data.telefono, content);
+      providerId = await sendWhatsApp(eligibility.data, content);
     } catch (sendError) {
       await admin.from('mensajes_whatsapp').update({ estado: 'FALLIDO',
         error_detalle: errorMessage(sendError).slice(0, 500), intentos: attempts,

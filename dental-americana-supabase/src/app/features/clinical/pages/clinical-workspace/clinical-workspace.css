@@ -56,3 +56,11 @@ button, input, textarea { font: inherit; }
 
 @media (max-width: 1100px) { .clinical-page { grid-template-columns: 250px 1fr; }.record-footer { left: calc(64px + 250px); }.vital-grid { grid-template-columns: repeat(3,1fr); } }
 @media (max-width: 760px) { .clinical-page { display: block; }.worklist { position: static; height: auto; min-height: calc(100dvh - 130px); border: 0; }.clinical-page.with-record .worklist { display: none; }.record-header { padding: 15px 13px; }.back-mobile { display: grid; width: 34px; height: 34px; place-items: center; border: 0; border-radius: 9px; background: #eef3f6; }.back-mobile svg { width: 16px; }.patient-avatar { display: none; }.record-progress { width: 95px; }.record-identity p { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.allergy-banner, .message, .record-tabs { margin-right: 12px; margin-left: 12px; }.record-body { padding: 12px 12px 95px; }.form-card { padding: 17px; }.two-columns, .vital-grid { grid-template-columns: 1fr; }.record-footer { left: 0; padding: 11px 12px 76px; }.record-footer > div { display: none; }.record-footer button { flex: 1; justify-content: center; } }
+:host .clinical-fields { min-width: 0; border: 0; margin: 0; padding: 0; }
+:host .patient-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0; padding: 14px; border: 1px solid #d5e5e9; border-radius: 12px; background: #f2f9fa; }
+:host .patient-actions > div { display: grid; gap: 4px; width: 100%; margin-bottom: 4px; }
+:host .patient-actions strong { color: #23596c; font-size: .85rem; }
+:host .patient-actions span { color: #607d8b; font-size: .72rem; }
+:host .patient-actions a { display: inline-flex; align-items: center; min-height: 38px; padding: 8px 11px; border: 1px solid #cddfe5; border-radius: 8px; background: #fff; color: #176c80; font-size: .74rem; font-weight: 700; text-decoration: none; }
+:host .patient-actions a:focus-visible { outline: 3px solid #16758a; outline-offset: 2px; }
+:host .pending-note { color: #8b611f; background: #fff6e2; }

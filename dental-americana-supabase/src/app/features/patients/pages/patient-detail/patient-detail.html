@@ -15,6 +15,9 @@
         </div>
       </div>
       <div class="header-actions no-print">
+        @if (canReadClinical) {
+          <a class="secondary focus-ring" [routerLink]="['/sistema/pacientes', patient()!.id, 'historia']"><svg lucideHistory></svg> Historia clínica completa</a>
+        }
         <button class="secondary focus-ring" (click)="print()"><svg lucidePrinter></svg> Imprimir</button>
         @if (canWritePatient()) {
           <a class="secondary focus-ring" [routerLink]="['/sistema/pacientes', patient()!.id, 'editar']"><svg lucideEdit3></svg> Editar</a>

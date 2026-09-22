@@ -166,14 +166,18 @@ select cron.schedule(
       'x-cron-secret',
       (select decrypted_secret from vault.decrypted_secrets where name = 'whatsapp_cron_secret')
     ),
-    body := '{}'::jsonb
+    body := '{}'::jsonb,
+    timeout_milliseconds := 120000
   );
   $$
 );
 ```
 
 Si el Dashboard solicita habilitarlas, active las extensiones `pg_cron`, `pg_net` y Vault. Revise el
-historial del Job y los logs de `whatsapp-dispatch` después de crearlo.
+historial del Job y los logs de `whatsapp-dispatch` después de crearlo. Para actualizar un cron ya
+creado sin volver a copiar el SQL, ejecute `npx supabase db query --linked --file supabase/ops/whatsapp-dispatch-cron.sql`
+desde la raíz del repositorio. El límite HTTP predeterminado de `pg_net` es 5 segundos; por eso aquí
+se configura en 120 segundos. El despachador procesa hasta 5 mensajes por ejecución.
 
 ## 7. Prueba final controlada
 
@@ -193,9 +197,12 @@ Revise **Edge Functions → Logs**, **Cron → Job runs**, `mensajes_whatsapp`, 
 
 ## 8. Copiloto IA opcional
 
-Sin `AI_API_KEY`, `copilot-generate` ya funciona con un borrador estructurado local. Para conectar un
-proveedor compatible, configure `AI_API_KEY`, `AI_API_URL` y `AI_MODEL` como secretos. La aprobación
-profesional continúa siendo obligatoria; nunca coloque esa clave en Angular.
+`copilot-generate` funciona con un borrador estructurado local. Para conectar Gemini o un proveedor
+compatible, configure su API key como secreto; para el proveedor compatible también hacen falta
+`AI_API_URL` y `AI_MODEL`. El envío de datos clínicos a terceros permanece desactivado hasta establecer
+`EXTERNAL_AI_ENABLED=true` en Supabase Secrets. Antes de activarlo, revise consentimiento, condiciones
+del proveedor y los posibles identificadores en textos clínicos libres. La aprobación profesional
+continúa siendo obligatoria; nunca coloque esa clave en Angular.
 
 ## Lista de salida a producción
 

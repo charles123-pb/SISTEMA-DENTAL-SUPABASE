@@ -1,6 +1,7 @@
 import { inject, Injectable, signal } from '@angular/core';
-import { forkJoin, of } from 'rxjs';
+import { catchError, forkJoin, Observable, of } from 'rxjs';
 import { AppointmentApiService } from '../../features/appointments/data-access/appointment-api.service';
+import { BookingRequestApiService } from '../../features/appointments/data-access/booking-request-api.service';
 import { Appointment as ApiAppointment } from '../../features/appointments/models/appointment.models';
 import { FinanceApiService } from '../../features/finance/data-access/finance-api.service';
 import { FinanceDashboard } from '../../features/finance/models/finance.models';
@@ -18,6 +19,7 @@ import {
 export class DashboardService {
   private readonly auth = inject(AuthService);
   private readonly appointmentApi = inject(AppointmentApiService);
+  private readonly bookingApi = inject(BookingRequestApiService);
   private readonly financeApi = inject(FinanceApiService);
   private readonly messagingApi = inject(MessagingApiService);
   private readonly errors = inject(SupabaseErrorService);
@@ -27,11 +29,18 @@ export class DashboardService {
   readonly pending = signal<PendingTask[]>([]);
   readonly loading = signal(false);
   readonly error = signal('');
+  readonly warnings = signal<string[]>([]);
   load(): void {
     const requestId = ++this.requestId;
     const { from, to } = this.todayRange();
     this.loading.set(true);
     this.error.set('');
+    this.warnings.set([]);
+    const available = <T>(request: Observable<T>, label: string): Observable<T | null> =>
+      request.pipe(catchError(() => {
+        if (requestId === this.requestId) this.warnings.update((items) => [...items, label]);
+        return of(null);
+      }));
     const appointmentRequest = this.auth.hasPermission('CITA_LEER')
       ? this.appointmentApi.list(from, to)
       : of<ApiAppointment[]>([]);
@@ -42,32 +51,36 @@ export class DashboardService {
       ? this.messagingApi.followUps()
       : of<FollowUp[]>([]);
     forkJoin({
-      appointments: appointmentRequest,
-      finance: financeRequest,
-      followups: followRequest,
+      appointments: available(appointmentRequest, 'Agenda no disponible'),
+      finance: available(financeRequest, 'Finanzas no disponibles'),
+      followups: available(followRequest, 'Seguimientos no disponibles'),
+      requests: this.auth.hasPermission('CITA_LEER')
+        ? available(this.bookingApi.list(), 'Solicitudes no disponibles') : of(null),
+      messaging: this.auth.hasPermission('SEGUIMIENTO_LEER')
+        ? available(this.messagingApi.workdaySummary(), 'Pendientes de WhatsApp no disponibles') : of(null),
     }).subscribe({
       next: (r) => {
         if (requestId !== this.requestId) return;
-        const visible = r.appointments.filter(
+        const visible = (r.appointments ?? []).filter(
           (a) => a.status !== 'CANCELADA' && a.status !== 'NO_ASISTIO',
         );
         this.appointments.set(
           visible
+            .filter((appointment) => appointment.status !== 'COMPLETADA')
             .sort((a, b) => a.start.localeCompare(b.start))
-            .slice(0, 8)
             .map((a) => this.mapAppointment(a)),
         );
-        const alerts = r.followups.filter((f) => f.status === 'ALERTA');
+        const alerts = (r.followups ?? []).filter((f) => f.status === 'ALERTA');
         this.metrics.set([
           {
             label: 'Citas de hoy',
-            value: String(visible.length),
+            value: r.appointments === null ? '—' : String(visible.length),
             detail: `${visible.filter((a) => a.status === 'CONFIRMADA').length} confirmadas`,
             tone: 'blue',
           },
           {
             label: 'En espera',
-            value: String(
+            value: r.appointments === null ? '—' : String(
               visible.filter((a) => a.status === 'EN_ESPERA' || a.status === 'EN_ATENCION').length,
             ),
             detail: 'Pacientes en clínica',
@@ -75,7 +88,7 @@ export class DashboardService {
           },
           {
             label: 'Por confirmar',
-            value: String(visible.filter((a) => a.status === 'PENDIENTE_CONFIRMACION').length),
+            value: r.appointments === null ? '—' : String(visible.filter((a) => a.status === 'PENDIENTE_CONFIRMACION').length),
             detail: 'Requieren contacto',
             tone: 'amber',
           },
@@ -94,6 +107,15 @@ export class DashboardService {
               },
         ]);
         const tasks: PendingTask[] = [];
+        const requests = (r.requests ?? []).filter((request) => request.status === 'PENDIENTE' || request.status === 'CONTACTADO');
+        if (requests.length) tasks.push({ id: -1, title: 'Solicitudes por agendar',
+          detail: `${requests.length} solicitudes pendientes o contactadas`, kind: 'approval', route: '/sistema/agenda/solicitudes' });
+        if (r.messaging?.failedMessages) tasks.push({ id: -2, title: 'Envíos de WhatsApp fallidos',
+          detail: `${r.messaging.failedMessages} mensajes requieren revisión antes de reintentar`, kind: 'alert', route: '/sistema/seguimientos' });
+        if (r.messaging?.unreadConversations) tasks.push({ id: -3, title: 'WhatsApp sin leer',
+          detail: `${r.messaging.unreadConversations} conversaciones con mensajes nuevos`, kind: 'alert', route: '/sistema/seguimientos' });
+        if (r.messaging?.reviewConversations) tasks.push({ id: -4, title: 'Conversaciones derivadas',
+          detail: `${r.messaging.reviewConversations} conversaciones necesitan tu revisión`, kind: 'alert', route: '/sistema/seguimientos' });
         alerts.slice(0, 3).forEach((f) =>
           tasks.push({
             id: f.id,
@@ -123,7 +145,7 @@ export class DashboardService {
               route: '/sistema/agenda',
             }),
           );
-        this.pending.set(tasks.slice(0, 6));
+        this.pending.set(tasks);
         this.loading.set(false);
       },
       error: (error: unknown) => {

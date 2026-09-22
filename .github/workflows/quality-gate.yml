@@ -1,0 +1,79 @@
+name: Quality gate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dental-americana-supabase
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: dental-americana-supabase/package-lock.json
+      - run: npm ci
+      - run: npm run test:ci
+      - run: npm run build
+      - run: test -f dist/dental-americana-supabase/browser/licenses/inter/LICENSE && test -f dist/dental-americana-supabase/browser/licenses/manrope/LICENSE
+      - run: npm audit --audit-level=moderate
+      - run: docker build --file Dockerfile --tag dental-americana-ci .
+
+  edge-functions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.6
+      - run: deno check supabase/functions/*/index.ts
+      - run: deno test --allow-env supabase/functions/_shared/whatsapp_test.ts supabase/functions/whatsapp-webhook/handler_test.ts
+
+  whatsapp-database:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: ci-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probar migraciones y automatizaciones en base aislada
+        shell: bash
+        run: |
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/bootstrap-postgres.sql
+          for migration in supabase/migrations/*.sql; do
+            case "$migration" in *202609090004_whatsapp_scheduler_extensions.sql) continue;; esac
+            psql -v ON_ERROR_STOP=1 -f "$migration"
+          done
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/whatsapp-automation.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/patient-clinical-report.sql
+
+  tracked-secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rechazar archivos secretos versionados
+        run: |
+          tracked=$(git ls-files | grep -E '(^|/)(\.env($|\.)|secrets/)' | grep -vE '\.env\.example$' || true)
+          if [ -n "$tracked" ]; then
+            printf 'Archivos sensibles versionados:\n%s\n' "$tracked"
+            exit 1
+          fi

@@ -83,8 +83,11 @@ export class BookingRequests implements OnInit {
   manage(item: BookingRequest, status: BookingRequestStatus) {
     if (this.saving()) return;
     let observation: string | undefined;
-    if (status === 'CONTACTADO')
-      observation = prompt('Observación del contacto:')?.trim() || undefined;
+    if (status === 'CONTACTADO') {
+      const response = prompt('Observación del contacto:');
+      if (response === null) return;
+      observation = response.trim() || undefined;
+    }
     if (status === 'DESCARTADO') {
       observation = prompt('Motivo para descartar:')?.trim();
       if (!observation) return;

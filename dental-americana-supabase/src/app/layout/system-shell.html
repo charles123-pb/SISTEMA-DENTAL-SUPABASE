@@ -4,7 +4,7 @@
   }
   <aside class="sidebar" [class.open]="menuOpen()">
     <a routerLink="/" class="system-brand focus-ring"
-      ><span>DA</span><small>Dental<br />Americana</small></a
+      ><img src="brand/dental-americana-logo.svg" alt="" /><small>Dental<br />Americana</small></a
     >
     <nav>
       <a
@@ -44,7 +44,7 @@
       }
       @if (canUseCopilot()) {
         <a routerLink="/sistema/copiloto" routerLinkActive="active" (click)="menuOpen.set(false)"
-          ><svg lucideBot></svg><span>DENTALIA</span></a
+          ><svg lucideBot></svg><span>DentalIA</span></a
         >
       }
     </nav>
@@ -87,11 +87,6 @@
     </div>
   </header>
   <main class="workspace"><router-outlet /></main>
-  @if (canUseCopilot()) {
-    <a class="ai-button focus-ring" routerLink="/sistema/copiloto"
-      ><svg lucideBot></svg><span>DENTALIA</span></a
-    >
-  }
   <nav class="mobile-nav">
     <a routerLink="/sistema/inicio" routerLinkActive="active"
       ><svg lucideLayoutDashboard></svg><span>Inicio</span></a

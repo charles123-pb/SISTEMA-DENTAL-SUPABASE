@@ -16,6 +16,8 @@ import {
   LucideArrowLeft,
   LucideBaby,
   LucideCheck,
+  LucideChevronLeft,
+  LucideChevronRight,
   LucideClipboardCheck,
   LucideHistory,
   LucideLoaderCircle,
@@ -29,10 +31,17 @@ import {
 } from '@lucide/angular';
 import { Observable } from 'rxjs';
 import { AuthService } from '../../../../core/auth/auth.service';
+import { protectBeforeUnload } from '../../../../core/navigation/pending-changes.guard';
 import { SupabaseErrorService } from '../../../../core/supabase/supabase-error.service';
 import { ClinicalApiService } from '../../../clinical/data-access/clinical-api.service';
 import { ClinicalEncounter } from '../../../clinical/models/clinical.models';
 import { OdontogramApiService } from '../../data-access/odontogram-api.service';
+import {
+  CONDITION_OPTIONS,
+  conditionColor,
+  centerSurfaceFor,
+} from '../../models/odontogram-presentation';
+import { ToothSurfaceMap } from '../../ui/tooth-surface-map/tooth-surface-map';
 import {
   DentitionType,
   Odontogram,
@@ -43,7 +52,9 @@ import {
 } from '../../models/odontogram.models';
 @Component({
   selector: 'app-odontogram-editor',
+  host: { '(window:beforeunload)': 'beforeUnload($event)' },
   imports: [
+    ToothSurfaceMap,
     ReactiveFormsModule,
     RouterLink,
     DatePipe,
@@ -51,6 +62,8 @@ import {
     LucideArrowLeft,
     LucideBaby,
     LucideCheck,
+    LucideChevronLeft,
+    LucideChevronRight,
     LucideClipboardCheck,
     LucideHistory,
     LucideLoaderCircle,
@@ -82,11 +95,25 @@ export class OdontogramEditor implements OnInit {
   readonly selectedTooth = signal('11');
   readonly loading = signal(true);
   readonly saving = signal(false);
-  readonly quickMark = signal(true);
+  readonly quickMark = signal(false);
+  readonly focusedQuadrant = signal(0);
   readonly error = signal('');
   readonly success = signal('');
   readonly canWrite = signal(this.auth.hasPermission('CLINICA_ESCRIBIR'));
   readonly canApprove = signal(this.auth.hasPermission('CLINICA_APROBAR'));
+  readonly editable = computed(
+    () =>
+      this.canWrite() &&
+      this.current()?.status === 'BORRADOR' &&
+      this.encounter()?.status === 'BORRADOR',
+  );
+  readonly quadrantOptions = [
+    { value: 0, label: 'Todas' },
+    { value: 1, label: 'Sup. derecha' },
+    { value: 2, label: 'Sup. izquierda' },
+    { value: 4, label: 'Inf. derecha' },
+    { value: 3, label: 'Inf. izquierda' },
+  ];
   readonly permanentUpper = [
     '18',
     '17',
@@ -131,9 +158,21 @@ export class OdontogramEditor implements OnInit {
   readonly lower = computed(() =>
     this.dentition() === 'PERMANENTE' ? this.permanentLower : this.primaryLower,
   );
-  readonly selectedFindings = computed(
-    () => this.current()?.findings.filter((f) => f.tooth === this.selectedTooth()) ?? [],
-  );
+  readonly findingsByTooth = computed(() => {
+    const result: Record<string, OdontogramFinding[]> = {};
+    for (const finding of this.current()?.findings ?? [])
+      (result[finding.tooth] ??= []).push(finding);
+    return result;
+  });
+  readonly selectedFindings = computed(() => this.findingsByTooth()[this.selectedTooth()] ?? []);
+  readonly visibleArches = computed(() => {
+    const quadrant = this.focusedQuadrant();
+    const matches = (tooth: string) => !quadrant || ((Number(tooth[0]) - 1) % 4) + 1 === quadrant;
+    return [
+      { label: 'Arcada superior', teeth: this.upper().filter(matches) },
+      { label: 'Arcada inferior', teeth: this.lower().filter(matches) },
+    ].filter((arch) => arch.teeth.length);
+  });
   readonly clinicalSummary = computed(() => {
     const findings = this.current()?.findings ?? [];
     const toothCount = (predicate: (finding: OdontogramFinding) => boolean) =>
@@ -147,24 +186,7 @@ export class OdontogramEditor implements OnInit {
       absent: toothCount((finding) => finding.condition === 'AUSENTE'),
     };
   });
-  readonly conditionOptions: ReadonlyArray<{
-    value: ToothCondition;
-    label: string;
-    color: string;
-  }> = [
-    { value: 'CARIES', label: 'Caries', color: '#ef4444' },
-    { value: 'RESTAURACION', label: 'Restauración', color: '#3b82f6' },
-    { value: 'CORONA', label: 'Corona', color: '#8b5cf6' },
-    { value: 'AUSENTE', label: 'Ausente', color: '#64748b' },
-    { value: 'EXTRACCION_INDICADA', label: 'Extracción', color: '#f97316' },
-    { value: 'ENDODONCIA', label: 'Endodoncia', color: '#a855f7' },
-    { value: 'FRACTURA', label: 'Fractura', color: '#e11d48' },
-    { value: 'SELLANTE', label: 'Sellante', color: '#06b6d4' },
-    { value: 'PROTESIS', label: 'Prótesis', color: '#7c3aed' },
-    { value: 'IMPLANTE', label: 'Implante', color: '#475569' },
-    { value: 'MOVILIDAD', label: 'Movilidad', color: '#eab308' },
-    { value: 'OTRO', label: 'Otro', color: '#0f766e' },
-  ];
+  readonly conditionOptions = CONDITION_OPTIONS;
   readonly form = this.fb.group({
     surface: this.fb.control<ToothSurface>('GENERAL'),
     condition: this.fb.control<ToothCondition>('CARIES'),
@@ -194,68 +216,83 @@ export class OdontogramEditor implements OnInit {
       });
   }
   switchDentition(type: DentitionType): void {
+    if (this.saving()) return;
+    if (type !== this.dentition() && this.hasPendingObservation()) {
+      this.clear();
+      this.error.set('Guarda o descarta la observación general antes de cambiar de dentición.');
+      return;
+    }
+    this.clear();
     this.dentition.set(type);
     this.selectedTooth.set(type === 'PERMANENTE' ? '11' : '51');
+    this.focusedQuadrant.set(0);
+    this.form.controls.surface.setValue('GENERAL');
     const existing = this.items().find((i) => i.dentitionType === type);
     if (existing) {
       this.setCurrent(existing);
-    } else if (this.canWrite() && this.encounter()?.status === 'BORRADOR') {
-      this.initialize(type);
     } else {
       this.current.set(null);
+      this.observation.setValue('');
+      this.observation.markAsPristine();
     }
   }
+  createDentition(): void {
+    const encounter = this.encounter();
+    const type = this.dentition();
+    if (
+      this.saving() ||
+      this.current() ||
+      !encounter ||
+      !this.canWrite() ||
+      encounter.status !== 'BORRADOR'
+    )
+      return;
+    this.saving.set(true);
+    this.clear();
+    this.api
+      .initialize(encounter.id, type)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (item) => {
+          this.items.update((v) => [...v.filter((i) => i.dentitionType !== type), item]);
+          if (this.dentition() === item.dentitionType) {
+            this.setCurrent(item);
+            this.success.set(
+              `Odontograma ${item.dentitionType === 'INFANTIL' ? 'infantil' : 'permanente'} creado.`,
+            );
+          }
+          this.saving.set(false);
+        },
+        error: (e) => this.fail(e, 'No se pudo crear el odontograma.'),
+      });
+  }
   selectTooth(tooth: string): void {
+    if (this.saving()) return;
     this.selectedTooth.set(tooth);
     this.form.controls.surface.setValue('GENERAL');
     this.form.controls.observation.setValue('');
     this.clear();
   }
   findingsFor(tooth: string): OdontogramFinding[] {
-    return this.current()?.findings.filter((f) => f.tooth === tooth) ?? [];
-  }
-  colorFor(tooth: string): string {
-    const findings = this.findingsFor(tooth);
-    if (
-      findings.some(
-        (f) =>
-          f.treatmentState === 'INDICADO' ||
-          ['CARIES', 'EXTRACCION_INDICADA', 'FRACTURA', 'MOVILIDAD'].includes(f.condition),
-      )
-    )
-      return '#d35b64';
-    if (findings.length) return '#3d81bc';
-    return '#d5e0e6';
+    return this.findingsByTooth()[tooth] ?? [];
   }
   conditionColor(condition: ToothCondition): string {
-    return this.conditionOptions.find((option) => option.value === condition)?.color ?? '#0f766e';
+    return conditionColor(condition);
   }
-  surfaceColor(tooth: string, surface: ToothSurface): string {
-    const finding = [...this.findingsFor(tooth)]
-      .reverse()
-      .find((item) => item.surface === surface || item.surface === 'GENERAL');
-    return finding ? this.conditionColor(finding.condition) : '#f8fafc';
+  focusQuadrant(quadrant: number): void {
+    if (this.saving()) return;
+    this.focusedQuadrant.set(quadrant);
+    const teeth = this.visibleArches().flatMap((arch) => arch.teeth);
+    if (!teeth.includes(this.selectedTooth())) this.selectTooth(teeth[0]);
   }
-  hasSurfaceFinding(tooth: string, surface: ToothSurface): boolean {
-    return this.findingsFor(tooth).some(
-      (finding) => finding.surface === surface || finding.surface === 'GENERAL',
-    );
+  moveTooth(direction: number): void {
+    const teeth = this.visibleArches().flatMap((arch) => arch.teeth);
+    const index = teeth.indexOf(this.selectedTooth());
+    this.selectTooth(teeth[(index + direction + teeth.length) % teeth.length]);
   }
-  isAbsent(tooth: string): boolean {
-    return this.findingsFor(tooth).some((finding) => finding.condition === 'AUSENTE');
-  }
-  lateralSurface(tooth: string, side: 'left' | 'right'): ToothSurface {
-    const mesialOnRight = ['1', '4', '5', '8'].includes(tooth[0]);
-    return (side === 'right') === mesialOnRight ? 'MESIAL' : 'DISTAL';
-  }
-  verticalSurface(tooth: string, side: 'top' | 'bottom'): ToothSurface {
-    const isUpper = ['1', '2', '5', '6'].includes(tooth[0]);
-    return (side === 'top') === isUpper ? 'VESTIBULAR' : 'LINGUAL_PALATINA';
-  }
-  surfaceLabel(tooth: string, surface: ToothSurface): string {
-    const resolved =
-      surface === 'OCLUSAL' || surface === 'INCISAL' ? this.centerSurfaceFor(tooth) : surface;
-    return `${this.label(resolved)} de la pieza ${tooth}`;
+  showDetail(panel: HTMLElement): void {
+    panel.scrollIntoView({ block: 'start' });
+    panel.focus({ preventScroll: true });
   }
   toothDescription(tooth: string): string {
     const quadrant: Record<string, string> = {
@@ -294,13 +331,17 @@ export class OdontogramEditor implements OnInit {
     return this.centerSurfaceFor(this.selectedTooth());
   }
   centerSurfaceFor(tooth: string): ToothSurface {
-    return Number(tooth[1]) <= 3 ? 'INCISAL' : 'OCLUSAL';
+    return centerSurfaceFor(tooth);
   }
   chooseSurface(surface: ToothSurface): void {
     this.form.controls.surface.setValue(surface);
   }
   chooseCondition(condition: ToothCondition): void {
     this.form.controls.condition.setValue(condition);
+  }
+  chooseTreatmentState(state: string): void {
+    if (state === 'INDICADO' || state === 'EXISTENTE' || state === 'REALIZADO')
+      this.form.controls.treatmentState.setValue(state);
   }
   markSurface(tooth: string, surface: ToothSurface): void {
     if (this.saving()) return;
@@ -314,14 +355,13 @@ export class OdontogramEditor implements OnInit {
   }
   add(quick = false): void {
     const item = this.current();
-    if (
-      !item ||
-      !this.canWrite() ||
-      item.status !== 'BORRADOR' ||
-      this.form.invalid ||
-      this.saving()
-    )
+    if (!item || !this.canWrite() || item.status !== 'BORRADOR' || this.saving()) return;
+    if (this.form.invalid) {
+      this.form.markAllAsTouched();
+      this.clear();
+      this.error.set('La observación del hallazgo debe tener como máximo 500 caracteres.');
       return;
+    }
     const value = this.form.getRawValue();
     this.run(
       this.api.addFinding(item.id, {
@@ -335,7 +375,11 @@ export class OdontogramEditor implements OnInit {
       quick
         ? `Pieza ${this.selectedTooth()} marcada correctamente.`
         : 'Hallazgo confirmado y registrado.',
-      () => this.form.controls.observation.setValue(''),
+      () => {
+        if (this.form.controls.observation.value === value.observation) {
+          this.form.controls.observation.setValue('');
+        }
+      },
     );
   }
   remove(finding: OdontogramFinding): void {
@@ -354,29 +398,55 @@ export class OdontogramEditor implements OnInit {
       () => {},
     );
   }
+  hasPendingObservation(): boolean {
+    const item = this.current();
+    return !!item && this.observation.value !== (item.generalObservation ?? '');
+  }
+  hasUnsavedChanges(): boolean {
+    return this.current()?.status === 'BORRADOR' && (this.hasPendingObservation()
+      || !!this.form.controls.observation.value.trim());
+  }
+  isSavingChanges(): boolean { return this.saving(); }
+  beforeUnload(event: Event): void { protectBeforeUnload(event, this); }
+  discardObservation(): void {
+    if (this.saving()) return;
+    this.observation.setValue(this.current()?.generalObservation ?? '');
+    this.observation.markAsPristine();
+    this.clear();
+  }
   saveObservation(): void {
     const item = this.current();
-    if (
-      !item ||
-      !this.canWrite() ||
-      item.status !== 'BORRADOR' ||
-      this.observation.invalid ||
-      this.saving()
-    )
+    if (!item || !this.canWrite() || item.status !== 'BORRADOR' || this.saving()) return;
+    if (this.observation.invalid) {
+      this.observation.markAsTouched();
+      this.clear();
+      this.error.set('La observación general debe tener como máximo 4000 caracteres.');
       return;
+    }
+    const submittedObservation = this.observation.value;
     this.run(
-      this.api.observe(item.id, this.observation.value, item.version),
+      this.api.observe(item.id, submittedObservation, item.version),
       'Observación general guardada.',
-      () => {},
+      (saved, observationBeforeRefresh) => {
+        this.observation.setValue(
+          observationBeforeRefresh === submittedObservation
+            ? (saved.generalObservation ?? '')
+            : observationBeforeRefresh,
+        );
+        if (this.hasPendingObservation()) this.observation.markAsDirty();
+        else this.observation.markAsPristine();
+      },
     );
   }
   approve(): void {
     const item = this.current();
+    if (!item || !this.canApprove() || item.status !== 'BORRADOR' || this.saving()) return;
+    if (this.hasPendingObservation()) {
+      this.clear();
+      this.error.set('Guarda o descarta la observación general antes de aprobar el odontograma.');
+      return;
+    }
     if (
-      !item ||
-      !this.canApprove() ||
-      item.status !== 'BORRADOR' ||
-      this.saving() ||
       !window.confirm(
         '¿Confirmas que revisaste todas las piezas y deseas aprobar este odontograma?',
       )
@@ -391,21 +461,6 @@ export class OdontogramEditor implements OnInit {
   label(value: string): string {
     return value.replaceAll('_', ' ').toLowerCase();
   }
-  private initialize(type: DentitionType): void {
-    if (this.saving() || !this.canWrite() || this.encounter()?.status !== 'BORRADOR') return;
-    this.saving.set(true);
-    this.api
-      .initialize(this.encounter()!.id, type)
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({
-        next: (item) => {
-          this.items.update((v) => [...v.filter((i) => i.dentitionType !== type), item]);
-          this.setCurrent(item);
-          this.saving.set(false);
-        },
-        error: (e) => this.fail(e, 'No se pudo crear el odontograma.'),
-      });
-  }
   private load(id: number): void {
     this.api
       .list(id)
@@ -415,8 +470,7 @@ export class OdontogramEditor implements OnInit {
           this.items.set(items);
           const current = items.find((i) => i.dentitionType === this.dentition());
           if (current) this.setCurrent(current);
-          else if (this.canWrite() && this.encounter()?.status === 'BORRADOR')
-            this.initialize(this.dentition());
+          else this.current.set(null);
           this.loading.set(false);
         },
         error: (error: unknown) => {
@@ -425,12 +479,19 @@ export class OdontogramEditor implements OnInit {
         },
       });
   }
-  private setCurrent(item: Odontogram): void {
+  private setCurrent(item: Odontogram, preserveObservation = true): void {
+    const preserveDraft =
+      preserveObservation && this.current()?.id === item.id && this.hasPendingObservation();
     this.current.set(item);
-    this.observation.setValue(item.generalObservation ?? '');
-    this.observation.markAsPristine();
+    if (!preserveDraft) this.observation.setValue(item.generalObservation ?? '');
+    if (this.hasPendingObservation()) this.observation.markAsDirty();
+    else this.observation.markAsPristine();
   }
-  private run(request: Observable<Odontogram>, message: string, done: () => void): void {
+  private run(
+    request: Observable<Odontogram>,
+    message: string,
+    done: (item: Odontogram, observationBeforeRefresh: string) => void,
+  ): void {
     if (this.saving()) return;
     this.saving.set(true);
     this.clear();
@@ -440,10 +501,13 @@ export class OdontogramEditor implements OnInit {
           ...v.filter((i) => i.dentitionType !== item.dentitionType),
           item,
         ]);
-        this.setCurrent(item);
         this.saving.set(false);
-        this.success.set(message);
-        done();
+        if (this.dentition() === item.dentitionType) {
+          const observationBeforeRefresh = this.observation.value;
+          this.setCurrent(item);
+          this.success.set(message);
+          done(item, observationBeforeRefresh);
+        }
       },
       error: (e) => this.fail(e, 'No se pudo guardar el cambio.'),
     });
